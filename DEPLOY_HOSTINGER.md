@@ -1,25 +1,29 @@
-# Hostinger Deploy (Paylaşımlı Hosting + Setup Python App + GitHub)
+# Hostinger Node.js Web App Deploy — Rhisos Mobilya CRM
 
-Frontend (React build) ana domainde: **https://rhisos.lofydigital.com**
-Backend (FastAPI) ayrı subdomain'de: **https://api.rhisos.lofydigital.com**
+Tek Node.js uygulaması: Express hem React build'ini hem `/api` route'larını AYNI
+domainden servis eder. Framework: **Express**. Production domain: https://rhisos.lofydigital.com
 
-Bu ayrım Hostinger paylaşımlı hostingde en güvenilir yöntemdir (alt-yol/prefix karmaşası olmaz).
+## Mimari
+- Backend: Node.js + Express (`server/index.js`), veritabanı MySQL/MariaDB (mysql2)
+- Frontend: React build (`frontend/build/`) Express tarafından statik servis edilir
+- Tüm API'ler `/api/...` altında; React Router için SPA fallback var (`/api/*` hariç)
+- MongoDB tamamen kaldırıldı.
 
----
+## Repo yapısı (root'tan deploy)
+```
+package.json        # scripts: build, start ; server bağımlılıkları
+server/             # Express app (index.js, db.js, helpers.js, email.js)
+frontend/           # React (build alınır -> frontend/build)
+```
 
-## 1) Backend subdomain + Python App
-1. hPanel -> Domains -> **Subdomains** -> `api` oluştur (api.rhisos.lofydigital.com).
-2. hPanel -> Advanced -> **Setup Python App** (Python Selector):
-   - Python sürümü: 3.11+
-   - **Application root**: repo'daki `backend/` klasörü
-   - **Application URL**: `api.rhisos.lofydigital.com` (kök — alt yol YOK)
-   - **Application startup file**: `passenger_wsgi.py`
-   - **Application Entry point**: `application`
-3. Uygulamanın sanal ortamında bağımlılıkları kur:
-   `pip install -r requirements.txt`  (a2wsgi dahildir)
-4. **Environment variables** (Python App -> Environment variables) — bunları girin:
+## Hostinger Node.js Web App adımları
+1. hPanel -> Advanced -> **Node.js** (Setup Node.js App):
+   - **Application root**: repo kök klasörü
+   - **Application startup file**: `server/index.js`  (veya start komutu `npm start`)
+   - Node sürümü: 18+ (20 önerilir)
+2. **Environment variables** (Node App -> Environment variables):
    ```
-   DB_HOST=srv711.hstgr.io       (Hostinger içinden "localhost" da olabilir)
+   DB_HOST=srv711.hstgr.io      (Hostinger içinden "localhost" da olabilir)
    DB_PORT=3306
    DB_NAME=u204439196_rhisos
    DB_USER=u204439196_rhisos
@@ -32,51 +36,20 @@ Bu ayrım Hostinger paylaşımlı hostingde en güvenilir yöntemdir (alt-yol/pr
    EMAIL_FROM_NAME=Rhisos Mobilya
    EMAIL_REPLY_TO=iskberkan@gmail.com
    ```
-5. **Restart** (Python App -> Restart). Açılışta tablolar otomatik oluşur, admin seed edilir.
-   - passenger_wsgi.py, Passenger WSGI'yi FastAPI ASGI'ye a2wsgi ile köprüler ve
-     init_db() ile tablo/admin kurulumunu tetikler.
+   > PORT: Hostinger otomatik verir; kod `process.env.PORT` kullanır. Elle PORT girmeyin.
+3. Bağımlılıklar: `npm install` (Node App arayüzünden "Run NPM Install").
+4. Frontend build: bir kez `npm run build` çalıştırın (frontend/build üretir).
+   - Hostinger Node App'te terminal/SSH ile: `npm run build`
+   - Veya build'i lokalde alıp `frontend/build` klasörünü repoya dahil edip push edin.
+5. **Start**: `npm start` (Express ayağa kalkar; ilk açılışta tablolar otomatik oluşur,
+   admin ADMIN_EMAIL/ADMIN_PASSWORD ile seed edilir).
 
-### Backend doğrulama
-`https://api.rhisos.lofydigital.com/api/health` ->
-`{"status":"ok","database":"connected","admin_exists":true, ...}`
+## Doğrulama
+1. `https://rhisos.lofydigital.com/api/health`
+   -> `{"status":"ok","database":"connected","admin_exists":true, ...}`
+2. `https://rhisos.lofydigital.com` -> Giriş: `iskberkan@gmail.com` / `rhisos2026`
 
----
-
-## 2) Frontend (ana domain)
-`frontend/.env.production` içinde şu tanımlı (repoda hazır):
-```
-REACT_APP_BACKEND_URL=https://api.rhisos.lofydigital.com
-```
-- `yarn build` ile üretilen `frontend/build/` ana domain kök dizinine yüklenir.
-- SPA fallback için build klasörüne `.htaccess`:
-  ```apache
-  RewriteEngine On
-  RewriteCond %{REQUEST_FILENAME} !-f
-  RewriteCond %{REQUEST_FILENAME} !-d
-  RewriteRule ^ index.html [L]
-  ```
-- Böylece tüm API çağrıları `https://api.rhisos.lofydigital.com/api/...` adresine gider.
-
-### CORS / Cookie
-- Backend CORS yalnızca `FRONTEND_URL`'e izin verir (allow_credentials=True).
-- Oturum cookie'leri `SameSite=None; Secure`. Her iki alan da `lofydigital.com` altında
-  olduğundan (same-site) HTTPS üzerinde sorunsuz çalışır.
-
----
-
-## 3) HTTPS
-Her iki (sub)domain için de SSL sertifikasının aktif olduğundan emin olun
-(hPanel -> SSL). Cookie'ler yalnızca HTTPS üzerinde çalışır.
-
----
-
-## Aynı domainde /api istenirse (alternatif, daha kırılgan)
-Python App'in Application URL'ini `rhisos.lofydigital.com/api` yapıp frontend'i relative
-`/api` ile (REACT_APP_BACKEND_URL boş) kullanabilirsiniz. Ancak Passenger'ın alt-yol
-prefix davranışı sürüme göre değişebildiğinden subdomain yöntemi önerilir.
-
----
-
-## Özet doğrulama akışı
-1. `GET https://api.rhisos.lofydigital.com/api/health` -> connected + admin_exists:true
-2. https://rhisos.lofydigital.com aç -> Giriş: `iskberkan@gmail.com` / `rhisos2026`
+## Notlar
+- Cookie'ler `httpOnly; Secure; SameSite=None` — HTTPS zorunlu (hPanel -> SSL aktif olmalı).
+- Frontend ve backend aynı origin olduğundan `REACT_APP_BACKEND_URL` gerekmez (relative `/api`).
+- MySQL şifresindeki özel karakterler mysql2 driver ile güvenle kullanılır.
