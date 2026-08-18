@@ -1,11 +1,78 @@
-// Plan paylaşımı: planı unicode-güvenli base64 koda çevirir / geri okur.
+// Plan paylaşımı: planı kısa anahtarlarla minimize edip LZ-string ile
+// URL-güvenli, kısa bir koda sıkıştırır. Eski (base64) kodlarla da uyumludur.
+import LZString from "lz-string";
+
+const KEY_MAP = {
+  financingAmount: "f",
+  downPayment: "d",
+  startDate: "s",
+  deliveryMonth: "dm",
+  deliveryYear: "dy",
+  paymentDay: "pd",
+  termMonths: "t",
+  customTerm: "ct",
+  calcMode: "cm",
+  preMode: "pm",
+  preMonthly: "pmv",
+  postMode: "om",
+  postMonthly: "omv",
+  monthlyBudget: "mb",
+  tiers: "ti",
+  edits: "e",
+  additional: "a",
+  name: "n",
+};
+const REV_MAP = Object.fromEntries(
+  Object.entries(KEY_MAP).map(([k, v]) => [v, k])
+);
+
+const isEmpty = (v) =>
+  v == null ||
+  (Array.isArray(v) && v.length === 0) ||
+  (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0);
+
+function compact(plan) {
+  const out = {};
+  for (const [key, short] of Object.entries(KEY_MAP)) {
+    const val = plan[key];
+    if (val === undefined) continue;
+    if (["tiers", "edits", "additional"].includes(key) && isEmpty(val)) continue;
+    out[short] = val;
+  }
+  return out;
+}
+
+function expand(obj) {
+  const plan = {
+    tiers: [],
+    edits: {},
+    additional: {},
+    customTerm: false,
+    name: "",
+  };
+  for (const [short, val] of Object.entries(obj)) {
+    const key = REV_MAP[short];
+    if (key) plan[key] = val;
+  }
+  return { ...plan, id: crypto.randomUUID() };
+}
 
 export function encodePlan(plan) {
-  const json = JSON.stringify(plan);
-  return btoa(unescape(encodeURIComponent(json)));
+  return LZString.compressToEncodedURIComponent(JSON.stringify(compact(plan)));
 }
 
 export function decodePlan(code) {
+  // Yeni format: LZ-string
+  try {
+    const json = LZString.decompressFromEncodedURIComponent(code);
+    if (json) {
+      const obj = JSON.parse(json);
+      if (obj && typeof obj === "object") return expand(obj);
+    }
+  } catch {
+    /* eski formata düş */
+  }
+  // Eski format: unicode-güvenli base64
   try {
     const json = decodeURIComponent(escape(atob(code)));
     const plan = JSON.parse(json);
@@ -16,6 +83,5 @@ export function decodePlan(code) {
 }
 
 export function buildShareUrl(plan) {
-  const code = encodePlan(plan);
-  return `${window.location.origin}/?p=${code}`;
+  return `${window.location.origin}/?p=${encodePlan(plan)}`;
 }
