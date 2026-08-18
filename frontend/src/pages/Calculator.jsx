@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import { resolveInput } from "@/lib/resolve";
 import { parseNum, fmtTL, fmtMonthYear } from "@/lib/format";
 import { loadPlans, upsertPlan, deletePlan } from "@/lib/storage";
 import { exportPlanPDF, exportPlanExcel } from "@/lib/exporters";
+import { buildShareUrl, encodePlan, decodePlan } from "@/lib/share";
 import { PlanForm } from "@/components/calculator/PlanForm";
 import { SummaryCards } from "@/components/calculator/SummaryCards";
 import { PaymentTable } from "@/components/calculator/PaymentTable";
@@ -32,6 +33,8 @@ import {
   CheckCircle2,
   Copy,
   Trash2,
+  Share2,
+  Check,
 } from "lucide-react";
 
 const makeDefaultPlan = (settings) => {
@@ -69,8 +72,44 @@ export default function Calculator() {
   const [saveName, setSaveName] = useState("");
   const [listOpen, setListOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const update = (patch) => setPlan((p) => ({ ...p, ...patch }));
+
+  // Paylaşılan planı URL'den yükle (?p=<kod>)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("p");
+    if (code) {
+      const loaded = decodePlan(code);
+      if (loaded) {
+        setPlan(loaded);
+        toast.success("Paylaşılan plan yüklendi");
+      } else {
+        toast.error("Geçersiz paylaşım bağlantısı");
+      }
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+
+  const handleShare = () => {
+    setShareUrl(buildShareUrl(plan));
+    setCopied(false);
+    setShareOpen(true);
+  };
+
+  const copyShare = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      toast.success("Panoya kopyalandı");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error("Kopyalanamadı");
+    }
+  };
 
   const { rows, summary, errors } = useMemo(
     () => buildPlan(resolveInput(plan, settings), settings),
@@ -160,6 +199,10 @@ export default function Calculator() {
             <Button variant="outline" size="sm" onClick={() => { setSavedPlans(loadPlans()); setCompareOpen(true); }} data-testid="btn-karsilastir" className="rounded-xl">
               <GitCompare size={15} className="sm:mr-1.5" />
               <span className="hidden sm:inline">Karşılaştır</span>
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleShare} data-testid="btn-paylas" className="rounded-xl">
+              <Share2 size={15} className="sm:mr-1.5" />
+              <span className="hidden sm:inline">Paylaş</span>
             </Button>
             <Button variant="outline" size="sm" onClick={handlePDF} data-testid="btn-pdf" className="rounded-xl">
               <FileDown size={15} className="sm:mr-1.5" />
@@ -314,6 +357,53 @@ export default function Calculator() {
         savedPlans={savedPlans}
         settings={settings}
       />
+
+      {/* Paylaş Dialog */}
+      <Dialog open={shareOpen} onOpenChange={setShareOpen}>
+        <DialogContent className="rounded-2xl max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="font-heading">Planı Paylaş</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-zinc-500">
+            Aşağıdaki bağlantıyı paylaşın. Bağlantıyı açan kişi planı aynen görüntüler.
+          </p>
+          <div className="space-y-2">
+            <span className="text-[11px] uppercase tracking-[0.1em] text-zinc-500 font-medium">
+              Paylaşım Bağlantısı
+            </span>
+            <div className="flex items-center gap-2">
+              <Input
+                readOnly
+                data-testid="share-url"
+                value={shareUrl}
+                onFocus={(e) => e.target.select()}
+                className="rounded-xl h-11 text-xs bg-zinc-50 tabular-nums"
+              />
+              <Button
+                size="icon"
+                data-testid="btn-copy-share"
+                onClick={() => copyShare(shareUrl)}
+                className="rounded-xl h-11 w-11 shrink-0 bg-zinc-900"
+              >
+                {copied ? <Check size={16} /> : <Copy size={16} />}
+              </Button>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <span className="text-[11px] uppercase tracking-[0.1em] text-zinc-500 font-medium">
+              Paylaşım Kodu
+            </span>
+            <textarea
+              readOnly
+              data-testid="share-code"
+              value={encodePlan(plan)}
+              onFocus={(e) => e.target.select()}
+              rows={3}
+              className="w-full rounded-xl bg-zinc-50 border border-zinc-200 p-3 text-xs break-all resize-none focus:outline-none focus:ring-2 focus:ring-zinc-900"
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
