@@ -24,7 +24,7 @@ import bcrypt
 import jwt
 
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import Column, String, Float, Integer, Boolean, Text, select, func, delete as sa_delete
+from sqlalchemy import Column, String, Float, Integer, Boolean, Text, select, func, text as sa_text, delete as sa_delete
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.dialects.mysql import LONGTEXT
@@ -958,6 +958,24 @@ async def update_settings(body: SettingsIn, user: dict = Depends(get_current_use
         db.add(Settings(key="company", **data))
     await db.commit()
     return data
+
+# ---------------- Health / DB check ----------------
+@api_router.get("/health")
+async def health():
+    info = {"status": "ok", "database": "unknown", "dialect": "mysql", "tables": [], "admin_exists": False}
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(sa_text("SELECT 1"))
+            info["database"] = "connected"
+            res = await db.execute(sa_text("SHOW TABLES"))
+            info["tables"] = sorted([row[0] for row in res.fetchall()])
+            admin_email = os.environ.get("ADMIN_EMAIL", "").lower()
+            if admin_email:
+                r = await db.execute(select(func.count(User.id)).where(User.email == admin_email))
+                info["admin_exists"] = (r.scalar_one() or 0) > 0
+        return info
+    except Exception as e:
+        return {"status": "error", "database": "unreachable", "dialect": "mysql", "detail": str(e)}
 
 # ---------------- App wiring ----------------
 app.include_router(api_router)
