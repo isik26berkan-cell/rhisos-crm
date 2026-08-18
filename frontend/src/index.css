@@ -1,0 +1,82 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    --background: 40 40% 98%;
+    --foreground: 24 15% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 24 15% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 24 15% 10%;
+    --primary: 24 19% 24%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 40 30% 94%;
+    --secondary-foreground: 24 19% 24%;
+    --muted: 40 20% 93%;
+    --muted-foreground: 24 8% 40%;
+    --accent: 40 30% 92%;
+    --accent-foreground: 24 19% 24%;
+    --destructive: 3 45% 42%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 30 15% 89%;
+    --input: 30 15% 89%;
+    --ring: 24 19% 24%;
+    --positive: 130 22% 29%;
+    --negative: 3 45% 42%;
+    --warning: 30 52% 64%;
+    --radius: 0.75rem;
+    --chart-1: 130 22% 35%;
+    --chart-2: 3 45% 50%;
+    --chart-3: 30 52% 60%;
+    --chart-4: 24 19% 30%;
+    --chart-5: 200 20% 45%;
+}
+
+* {
+    border-color: hsl(var(--border));
+}
+
+body {
+    margin: 0;
+    font-family: 'Manrope', sans-serif;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    -webkit-font-smoothing: antialiased;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+}
+
+h1, h2, h3, h4, h5, .font-display {
+    font-family: 'Outfit', sans-serif;
+}
+
+.font-mono, .tabular {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+}
+
+@layer base {
+    body {
+        @apply bg-background text-foreground;
+    }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(30 15% 82%); border-radius: 8px; }
+
+@media print {
+    .no-print { display: none !important; }
+    body { background: white !important; }
+    .print-area { box-shadow: none !important; border: none !important; }
+}
+
+.stagger-in {
+    opacity: 0;
+    animation: staggerIn 0.5s ease forwards;
+}
+@keyframes staggerIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+}

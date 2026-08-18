@@ -1,0 +1,28 @@
+{
+  "summary": "Full backend + frontend E2E test of Rhisos Mobilya CRM. Backend: 21/21 pytest passed (auth, customers, quotes with totals + approve->auto-income + revert removes income + delete cascades, transactions CRUD/filters, dashboard stats). Frontend: login with seeded admin OK, dashboard renders stats + monthly bar chart + expense pie chart, customer create OK, quote create with 2 items + discount computes grand total correctly (subtotal 2000 + VAT 400 - disc 100 = 2300 TL), approving quote via status select auto-creates income visible in Cash Flow, manual expense add works, income/expense filters work, print/PDF button present on quote view.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Global", "issues": ["Toast notifications appear top-right and can visually overlap the primary action button (e.g. 'Yeni Teklif') for ~2s; consider moving toast position or auto-dismissing faster"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_rhisos_backend.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py sets auth cookies with samesite='none' + secure=True which requires HTTPS - fine for preview but will break plain http/local dev.",
+    "compute_quote_totals applies VAT on pre-discount subtotal even though discount is subtracted from subtotal. This is a business/tax decision - comment in code notes 'keep simple: vat on pre-discount' - flag for confirmation with client.",
+    "Login rate limiting stores locked_until on every failed attempt, but the lock only triggers when count>=5; a single successful login clears attempts. Consider only setting locked_until when count reaches 5 to avoid confusion.",
+    "Dashboard endpoint loads up to 5000 transactions into memory and aggregates in Python - for scale consider MongoDB aggregation pipeline.",
+    "No user-scoping on customers/quotes/transactions - all authenticated users see all data. If multi-tenant intended this is a leak; if single-org, acceptable.",
+    "next_quote_number uses count_documents which is racy under concurrency and reuses numbers if a quote is deleted."
+  ],
+  "updated_files": ["/app/backend/tests/test_rhisos_backend.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin: iskberkan@gmail.com / rhisos2026 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Test run left a few TEST_/UI_TEST_ customers, quotes (1 approved), and manual expense transactions in the DB. Backend pytest cleans its own created quote+customer; some transactions from filter tests remain and are visible on dashboard.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression file: /app/backend/tests/test_rhisos_backend.py (pytest, 21 tests, parallel-safe). Auth via httpOnly cookies; requests.Session() handles them. Dashboard route is '/' (not '/dashboard'). Sidebar nav testids: nav-dashboard/nav-customers/nav-quotes/nav-cashflow. Quote status Select uses shadcn Select - open with click then click role='option' text 'Onaylandı'. Toast overlaps 'Yeni Teklif' after saving customer - prefer direct URL navigation to /quotes/new."
+}

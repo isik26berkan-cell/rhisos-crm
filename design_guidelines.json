@@ -1,0 +1,74 @@
+{
+  "theme": "light",
+  "typography": {
+    "headings": "Outfit",
+    "body": "Manrope",
+    "mono": "JetBrains Mono",
+    "instructions": "DO NOT USE Inter or generic sans for headings. Use Outfit for all display and headings. Use Manrope for standard body text, input labels, and standard UI elements. Use JetBrains Mono exclusively for financial figures, KDV (VAT) calculations, quotes totals, and line item prices to ensure tabular lining."
+  },
+  "colors": {
+    "archetype": "ORGANIC & EARTHY",
+    "background": "#FDFBF7",
+    "surface": "#FFFFFF",
+    "primary": "#4A3B32",
+    "primary_foreground": "#FFFFFF",
+    "accent_positive": "#3A5A40",
+    "accent_negative": "#9C3D38",
+    "accent_warning": "#D4A373",
+    "border": "#E8E5E1",
+    "text_primary": "#1F1A17",
+    "text_secondary": "#6B615A",
+    "instructions": "CRITICAL: DO NOT USE DEFAULT SAAS BLUE (#0000FF/Blue-600). Rhisos is a furniture company, UI should feel organic, warm, and grounded. Never use pure black (#000000) or pure gray (#808080). Tint neutrals with warmth."
+  },
+  "layouts": {
+    "type": "High Density Grid (Bento Mode B)",
+    "spacing_scale": "p-2, p-4, p-6, p-8, p-12",
+    "rules": "Use generous spacing. Dashboard outer padding should be p-8. Grid gaps should be gap-6. Dashboard cards should have internal p-6. Never fill 100% of the grid perfectly. Use asymmetrical spans."
+  },
+  "visual_enhancers": {
+    "surfaces": "Neumorphism ('Tactile' Variant) modified for CRM. Flat white background, 1px sharp inner border (#E8E5E1), zero drop-shadow on default. On hover: slight lift (-translate-y-1) and ambient shadow-lg. CRITICAL: DO NOT use complete transparent background in header, overlays, dropdowns.",
+    "corners": "rounded-xl for primary containers, rounded-md for inner components.",
+    "textures": "Include a subtle noise/grain texture overlaid on the main application background to kill digital flatness."
+  },
+  "components": {
+    "forms": "Use Shadcn UI forms heavily customized. Forms for creating Quotes must use flat backgrounds with 1px borders. Focus state must use primary color (#4A3B32) ring.",
+    "buttons": "Pill-shaped (rounded-full) for primary actions (e.g., 'Create Quote', 'Save'). Standard rounded-md for secondary/tertiary.",
+    "tables": "Essential for Cash Flow Tracking and Quote Line Items. Left-align text, right-align numeric amounts. Keep padding generous (py-4 px-6) to ensure high readability.",
+    "charts": "Use Recharts (via Shadcn). Bar charts for monthly income/expense trends. Donut charts for expense categories. Colors must use the defined accent palette.",
+    "toasts": "Use 'sonner' for all success/error notifications (located at /app/src/components/ui/sonner)."
+  },
+  "motion": {
+    "rules": "Micro-animations on all interactive elements. Hover states must shift border color and slight translate-y. Staggered entrance animations for dashboard widgets.",
+    "technical": "Use specific transitions (e.g., 'transition: transform 0.2s ease, opacity 0.2s ease'). NO 'transition-all'."
+  },
+  "accessibility": {
+    "contrast": "Ensure text meets APCA/WCAG standards. Focus states must be highly visible.",
+    "testing": "All interactive and key informational elements MUST include a 'data-testid' attribute (e.g., data-testid='create-quote-button')."
+  },
+  "media": {
+    "instructions": "Use these precise image URLs where placeholders are required.",
+    "image_urls": {
+      "logo": "https://images.unsplash.com/photo-1759936802353-a4999ad4e0d1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODh8MHwxfHNlYXJjaHwxfHxtaW5pbWFsaXN0JTIwbGV0dGVyJTIwUiUyMGxvZ298ZW58MHx8fHwxNzg3MDQ5NTk5fDA&ixlib=rb-4.1.0&q=85",
+      "avatars": [
+        "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAxODF8MHwxfHNlYXJjaHwyfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc4NjkyNjI4NHww&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1494790108377-be9c29b29330?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAxODF8MHwxfHNlYXJjaHwzfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc4NjkyNjI4NHww&ixlib=rb-4.1.0&q=85",
+        "https://images.pexels.com/photos/29852852/pexels-photo-29852852.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+      ],
+      "furniture_placeholders": [
+        "https://images.unsplash.com/photo-1532588213355-52317771cce6?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1NzZ8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjB3b29kZW4lMjBmdXJuaXR1cmUlMjBtaW5pbWFsaXN0fGVufDB8fHx8MTc4NzA0OTU5OXww&ixlib=rb-4.1.0&q=85",
+        "https://images.pexels.com/photos/12277013/pexels-photo-12277013.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+      ]
+    }
+  },
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "NEVER use generic centered layouts or simplistic gradients.",
+    "Always apply layered design elements with z-index hierarchy.",
+    "Do not apply 'transition: all' to avoid breaking transforms.",
+    "Do not add '.App { text-align: center; }' in CSS.",
+    "Use modern pill-shaped or rounded-md buttons.",
+    "NEVER use AI assistant emojis for icons. Use lucide-react or @phosphor-icons/react.",
+    "All components MUST include 'data-testid' for testing.",
+    "Prioritize reusing components from src/components/ui.",
+    "Never use full transparency for headers or dropdowns."
+  ]
+}
