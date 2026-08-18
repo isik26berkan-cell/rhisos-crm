@@ -4,8 +4,8 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatApiErrorDetail } from "@/lib/api";
-import { Armchair, Loader2 } from "lucide-react";
+import { formatApiErrorDetail, LOGO_HORIZONTAL } from "@/lib/api";
+import { Loader2 } from "lucide-react";
 
 export default function Login() {
   const { login } = useAuth();
@@ -36,11 +36,8 @@ export default function Login() {
           className="absolute inset-0 w-full h-full object-cover opacity-40"
         />
         <div className="relative z-10 p-12 flex flex-col justify-between h-full text-white">
-          <div className="flex items-center gap-3">
-            <div className="h-11 w-11 rounded-xl bg-warning flex items-center justify-center">
-              <Armchair className="h-6 w-6 text-primary" />
-            </div>
-            <span className="font-display font-bold text-2xl">Rhisos</span>
+          <div className="bg-white rounded-2xl px-5 py-4 inline-flex items-center self-start">
+            <img src={LOGO_HORIZONTAL} alt="Rhisos Mobilya" className="h-11 object-contain" />
           </div>
           <div>
             <h1 className="font-display text-4xl font-bold leading-tight">Mobilya işinizi<br />tek panelden yönetin.</h1>
@@ -51,11 +48,8 @@ export default function Login() {
 
       <div className="flex items-center justify-center p-8">
         <div className="w-full max-w-sm">
-          <div className="lg:hidden flex items-center gap-3 mb-8">
-            <div className="h-10 w-10 rounded-xl bg-primary flex items-center justify-center">
-              <Armchair className="h-5 w-5 text-warning" />
-            </div>
-            <span className="font-display font-bold text-xl">Rhisos Mobilya</span>
+          <div className="lg:hidden flex items-center mb-8">
+            <img src={LOGO_HORIZONTAL} alt="Rhisos Mobilya" className="h-11 object-contain" />
           </div>
           <h2 className="font-display text-3xl font-bold">Giriş Yap</h2>
           <p className="text-muted-foreground mt-2 text-sm">Hesabınıza erişmek için bilgilerinizi girin.</p>

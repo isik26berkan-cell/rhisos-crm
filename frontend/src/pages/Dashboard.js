@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import api, { fmtMoney } from "@/lib/api";
 import { Card } from "@/components/ui/card";
-import { TrendingUp, TrendingDown, Wallet, FileText, Users, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, FileText, Users, ArrowUpRight, ArrowDownRight, AlertTriangle, Clock } from "lucide-react";
+import { Link } from "react-router-dom";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid,
 } from "recharts";
@@ -56,6 +57,42 @@ export default function Dashboard() {
         <h1 className="font-display text-3xl font-bold">Genel Bakış</h1>
         <p className="text-muted-foreground mt-1">Rhisos Mobilya finansal ve satış özeti.</p>
       </div>
+
+      {stats.expiring_quotes?.length > 0 && (
+        <Card data-testid="expiring-alert" className="p-5 rounded-xl border border-warning/40 bg-warning/10 shadow-none mb-6">
+          <div className="flex items-start gap-3">
+            <div className="h-9 w-9 rounded-md bg-warning/20 flex items-center justify-center shrink-0">
+              <AlertTriangle className="h-5 w-5 text-warning" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-display font-semibold">Vadesi Yaklaşan Teklifler</h3>
+              <p className="text-sm text-muted-foreground mb-3">Aşağıdaki bekleyen tekliflerin geçerlilik süresi doluyor.</p>
+              <div className="space-y-2">
+                {stats.expiring_quotes.map((q) => (
+                  <Link
+                    key={q.id}
+                    to={`/quotes/${q.id}`}
+                    data-testid={`expiring-quote-${q.id}`}
+                    className="flex items-center justify-between bg-card rounded-md border px-4 py-2.5 text-sm hover:border-warning transition-colors"
+                  >
+                    <span className="flex items-center gap-3">
+                      <span className="font-mono font-medium">{q.quote_number}</span>
+                      <span className="text-muted-foreground">{q.customer_name}</span>
+                    </span>
+                    <span className="flex items-center gap-4">
+                      <span className="font-mono">{fmtMoney(q.grand_total, q.currency)}</span>
+                      <span className={`flex items-center gap-1 text-xs font-medium ${q.days_left < 0 ? "text-negative" : "text-warning"}`}>
+                        <Clock className="h-3.5 w-3.5" />
+                        {q.days_left < 0 ? `${Math.abs(q.days_left)} gün geçti` : q.days_left === 0 ? "Bugün doluyor" : `${q.days_left} gün kaldı`}
+                      </span>
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-6">
         <StatCard testid="stat-income" label="Toplam Gelir" value={fmtMoney(stats.total_income)} icon={TrendingUp} tone="positive" delay={0} />

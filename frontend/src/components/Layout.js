@@ -1,13 +1,15 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { LayoutDashboard, Users, FileText, Wallet, LogOut, Armchair } from "lucide-react";
+import { LayoutDashboard, Users, FileText, Wallet, LogOut, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { LOGO_HORIZONTAL } from "@/lib/api";
 
 const navItems = [
   { to: "/", label: "Panel", icon: LayoutDashboard, end: true, testid: "nav-dashboard" },
   { to: "/quotes", label: "Teklifler", icon: FileText, testid: "nav-quotes" },
   { to: "/customers", label: "Müşteriler", icon: Users, testid: "nav-customers" },
   { to: "/cashflow", label: "Kasa / Para Akışı", icon: Wallet, testid: "nav-cashflow" },
+  { to: "/settings", label: "Firma Ayarları", icon: Settings, testid: "nav-settings" },
 ];
 
 export default function Layout() {
@@ -22,13 +24,9 @@ export default function Layout() {
   return (
     <div className="min-h-screen flex">
       <aside className="w-64 shrink-0 bg-primary text-primary-foreground flex flex-col fixed h-full no-print z-20">
-        <div className="p-6 flex items-center gap-3 border-b border-white/10">
-          <div className="h-10 w-10 rounded-xl bg-warning/90 flex items-center justify-center">
-            <Armchair className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <div className="font-display font-bold text-lg leading-none">Rhisos</div>
-            <div className="text-xs text-white/60 mt-1">Mobilya CRM</div>
+        <div className="p-5 border-b border-white/10">
+          <div className="bg-white rounded-xl px-4 py-3 flex items-center justify-center">
+            <img src={LOGO_HORIZONTAL} alt="Rhisos Mobilya" className="h-9 object-contain" data-testid="sidebar-logo" />
           </div>
         </div>
         <nav className="flex-1 p-4 space-y-1">

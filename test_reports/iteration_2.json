@@ -1,0 +1,32 @@
+{
+  "summary": "Iteration 2 verified the 3 new features (Settings, Expiring quotes alert, Excel export) + regression on auth/customers/quotes/transactions/dashboard. Backend: 31/31 pytest passed (added 10 tests: TestSettings x2, TestExpiringQuotes x3, TestExcelExport x5). Frontend E2E: Settings save & persistence OK; dashboard shows expiring-alert with expiring-quote-<id> for a quote due in 3 days and correctly excludes far-future quotes; Excel download completes (5372-byte .xlsx). QuoteView shows logo + print button + phone/email/address/tax fields.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Settings", "issue": "Race condition: if user types into settings fields while the initial GET /api/settings is still in flight, the response resets/overwrites the input (setForm({...empty, ...data}) runs after render). Fix: set a `loaded` flag and gate rendering of inputs until data loaded, OR use uncontrolled defaultValue.", "selector": "[data-testid='settings-company-name']", "priority": "LOW"},
+      {"component": "QuoteView letterhead", "issue": "company_name (Firma Adı) is NEVER rendered on the quote document. The letterhead heading uses only `tagline`. If user leaves tagline empty but fills company name, the quote shows no company name at all. Add: {company?.company_name && <div className='font-display font-semibold ...'>{company.company_name}</div>} above tagline block in /app/frontend/src/pages/QuoteView.js:60.", "selector": "[data-testid='quote-logo']", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_rhisos_backend.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Render company_name (Firma Adı) in QuoteView letterhead - currently only tagline shows so users filling only company name see nothing.",
+    "Settings page: guard against initial GET overwriting user input (add loaded state or defaultValue approach)."
+  ],
+  "critical_code_review_comments": [
+    "QuoteView.js letterhead intentionally hides company_name field - likely oversight; should display it prominently as the primary heading.",
+    "Settings.js setForm({...empty, ...data}) in useEffect runs unconditionally after mount; a user-typed value can be clobbered by a slow API response.",
+    "compute_quote_totals still applies VAT on pre-discount subtotal - carried from iteration 1, business decision to confirm.",
+    "Dashboard aggregates up to 5000 txns in Python - will slow at scale; consider aggregation pipeline.",
+    "next_quote_number races via count_documents; may reuse numbers if quotes deleted."
+  ],
+  "updated_files": ["/app/backend/tests/test_rhisos_backend.py"],
+  "success_rate": {"backend": "100%", "frontend": "95%"},
+  "test_credentials": "admin: iskberkan@gmail.com / rhisos2026",
+  "seed_data_creation": "Test data was created and CLEANED UP by both pytest fixtures and a browser-side cleanup evaluate() that deleted UI_TEST customers/quotes, TEST_ prefixed transactions, and reset /api/settings back to defaults (company_name='Rhisos Mobilya', all other fields empty). DB should be clean for end user.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression: /app/backend/tests/test_rhisos_backend.py (31 tests, pytest, parallel-safe with xdist). New tests: TestSettings, TestExpiringQuotes, TestExcelExport (uses openpyxl to inspect xlsx). Excel export endpoint /api/transactions/export MUST be declared BEFORE /api/transactions/{tid} in server.py (currently correct). Sidebar testid nav-settings goes to /settings. QuoteView bug: company_name not rendered in letterhead - main agent should add it above tagline in QuoteView.js line ~61.",
+  "rca of the issue": "QuoteView letterhead RCA: The letterhead block conditions on `company?.tagline || phone || email || ...` and lists tagline/phone/email/address/tax but never renders company_name. Repro: Firma Ayarları -> set only 'Firma Adı' -> save -> open any quote -> letterhead shows logo but no company name text. Fix: insert `{company?.company_name && <div className='font-display font-bold text-base text-foreground'>{company.company_name}</div>}` at start of the info block in /app/frontend/src/pages/QuoteView.js line ~60."
+}

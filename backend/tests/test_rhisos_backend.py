@@ -1,6 +1,7 @@
 """Rhisos Mobilya CRM backend tests - auth, customers, quotes, transactions, dashboard."""
 import os
 import time
+from datetime import datetime, timezone, timedelta
 import pytest
 import requests
 
@@ -202,5 +203,135 @@ class TestDashboard:
         r = admin_session.get(f"{API}/dashboard/stats")
         assert r.status_code == 200
         d = r.json()
-        for k in ["total_income", "total_expense", "balance", "monthly", "expense_by_category", "quote_counts", "customer_count"]:
+        for k in ["total_income", "total_expense", "balance", "monthly", "expense_by_category", "quote_counts", "customer_count", "expiring_quotes"]:
             assert k in d
+        assert isinstance(d["expiring_quotes"], list)
+
+
+# ---------------- Settings (NEW) ----------------
+class TestSettings:
+    def test_get_default(self, admin_session):
+        r = admin_session.get(f"{API}/settings")
+        assert r.status_code == 200
+        d = r.json()
+        for k in ["company_name", "tagline", "address", "phone", "email", "website", "tax_office", "tax_number", "logo"]:
+            assert k in d
+
+    def test_update_and_persist(self, admin_session):
+        payload = {
+            "company_name": "TEST Rhisos Mobilya",
+            "tagline": "TEST Özel Tasarım",
+            "address": "TEST Adres 123",
+            "phone": "+90 555 111 2233",
+            "email": "test@rhisos.com",
+            "website": "https://rhisos.test",
+            "tax_office": "TEST Vergi Dairesi",
+            "tax_number": "1234567890",
+            "logo": "",
+        }
+        r = admin_session.put(f"{API}/settings", json=payload)
+        assert r.status_code == 200, r.text
+        # GET to verify persistence
+        r2 = admin_session.get(f"{API}/settings")
+        assert r2.status_code == 200
+        d = r2.json()
+        assert d["company_name"] == payload["company_name"]
+        assert d["phone"] == payload["phone"]
+        assert d["email"] == payload["email"]
+        assert d["tax_number"] == payload["tax_number"]
+
+
+# ---------------- Expiring quotes on dashboard (NEW) ----------------
+class TestExpiringQuotes:
+    customer_id = None
+    expiring_qid = None
+    far_qid = None
+
+    def test_setup(self, admin_session):
+        r = admin_session.post(f"{API}/customers", json={"name": "TEST_ExpCust"})
+        assert r.status_code == 200
+        TestExpiringQuotes.customer_id = r.json()["id"]
+
+        soon = (datetime.now(timezone.utc).date() + timedelta(days=3)).isoformat()
+        far = (datetime.now(timezone.utc).date() + timedelta(days=60)).isoformat()
+
+        for name, vu, target in [("soon", soon, "expiring_qid"), ("far", far, "far_qid")]:
+            payload = {
+                "customer_id": TestExpiringQuotes.customer_id,
+                "customer_name": "TEST_ExpCust",
+                "title": f"TEST Expiring {name}",
+                "items": [{"description": "x", "quantity": 1, "unit_price": 100, "vat_rate": 20}],
+                "currency": "TRY",
+                "valid_until": vu,
+                "discount": 0,
+            }
+            r = admin_session.post(f"{API}/quotes", json=payload)
+            assert r.status_code == 200
+            setattr(TestExpiringQuotes, target, r.json()["id"])
+
+    def test_dashboard_lists_expiring(self, admin_session):
+        r = admin_session.get(f"{API}/dashboard/stats")
+        assert r.status_code == 200
+        ids = [q["id"] for q in r.json()["expiring_quotes"]]
+        assert TestExpiringQuotes.expiring_qid in ids
+        assert TestExpiringQuotes.far_qid not in ids
+
+    def test_cleanup(self, admin_session):
+        admin_session.delete(f"{API}/quotes/{TestExpiringQuotes.expiring_qid}")
+        admin_session.delete(f"{API}/quotes/{TestExpiringQuotes.far_qid}")
+        admin_session.delete(f"{API}/customers/{TestExpiringQuotes.customer_id}")
+
+
+# ---------------- Excel Export (NEW) ----------------
+class TestExcelExport:
+    XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    tids = []
+
+    def test_setup(self, admin_session):
+        for t, cat, amt, date_str in [
+            ("income", "TEST_ExportIn", 1234.5, "2026-01-05"),
+            ("expense", "TEST_ExportEx", 250, "2026-01-06"),
+        ]:
+            r = admin_session.post(f"{API}/transactions", json={
+                "type": t, "amount": amt, "category": cat,
+                "payment_method": "bank", "date": date_str, "currency": "TRY",
+                "description": f"TEST xlsx {t}",
+            })
+            assert r.status_code == 200
+            TestExcelExport.tids.append(r.json()["id"])
+
+    def test_export_all(self, admin_session):
+        r = admin_session.get(f"{API}/transactions/export")
+        assert r.status_code == 200
+        assert r.headers.get("content-type", "").startswith(self.XLSX_MIME)
+        assert len(r.content) > 500  # non-empty xlsx
+        # PK zip header (xlsx = zip)
+        assert r.content[:2] == b"PK"
+
+    def test_export_type_filter(self, admin_session):
+        r = admin_session.get(f"{API}/transactions/export", params={"type": "expense"})
+        assert r.status_code == 200
+        assert r.headers.get("content-type", "").startswith(self.XLSX_MIME)
+        # Parse workbook and ensure only expense rows appear
+        import openpyxl, io as _io
+        wb = openpyxl.load_workbook(_io.BytesIO(r.content))
+        ws = wb.active
+        rows = list(ws.iter_rows(min_row=2, values_only=True))
+        # data rows before totals: type column index 1 (0-based)
+        data_types = [row[1] for row in rows if row[0]]  # skip totals (empty tarih)
+        assert data_types, "Export contained no data rows"
+        assert all(t == "Gider" for t in data_types)
+
+    def test_export_date_filter(self, admin_session):
+        r = admin_session.get(f"{API}/transactions/export", params={"start": "2026-01-05", "end": "2026-01-05"})
+        assert r.status_code == 200
+        import openpyxl, io as _io
+        wb = openpyxl.load_workbook(_io.BytesIO(r.content))
+        ws = wb.active
+        rows = list(ws.iter_rows(min_row=2, values_only=True))
+        dates = [row[0] for row in rows if row[0]]
+        assert dates and all(d == "2026-01-05" for d in dates)
+
+    def test_cleanup(self, admin_session):
+        for tid in TestExcelExport.tids:
+            admin_session.delete(f"{API}/transactions/{tid}")

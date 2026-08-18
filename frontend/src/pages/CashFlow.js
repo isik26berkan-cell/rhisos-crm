@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2, ArrowUpRight, ArrowDownRight, TrendingUp, TrendingDown, Wallet } from "lucide-react";
+import { Plus, Trash2, ArrowUpRight, ArrowDownRight, TrendingUp, TrendingDown, Wallet, Download } from "lucide-react";
 import { toast } from "sonner";
 
 const INCOME_CATS = ["Teklif Geliri", "Ürün Satışı", "Montaj Hizmeti", "Kapora", "Diğer Gelir"];
@@ -59,6 +59,27 @@ export default function CashFlow() {
     load();
   };
 
+  const exportExcel = async () => {
+    try {
+      const params = {};
+      if (filterType !== "all") params.type = filterType;
+      if (start) params.start = start;
+      if (end) params.end = end;
+      const res = await api.get("/transactions/export", { params, responseType: "blob" });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", "rhisos_kasa_raporu.xlsx");
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Excel raporu indirildi");
+    } catch (e) {
+      toast.error("Rapor indirilemedi");
+    }
+  };
+
   const cats = form.type === "income" ? INCOME_CATS : EXPENSE_CATS;
 
   return (
@@ -69,6 +90,7 @@ export default function CashFlow() {
           <p className="text-muted-foreground mt-1">Gelen ve giden para takibi.</p>
         </div>
         <div className="flex gap-3">
+          <Button data-testid="export-excel-button" onClick={exportExcel} variant="outline" className="rounded-full"><Download className="h-4 w-4 mr-2" /> Excel İndir</Button>
           <Button data-testid="add-income-button" onClick={() => openNew("income")} className="rounded-full bg-positive hover:bg-positive/90"><ArrowUpRight className="h-4 w-4 mr-2" /> Gelir Ekle</Button>
           <Button data-testid="add-expense-button" onClick={() => openNew("expense")} className="rounded-full bg-negative hover:bg-negative/90"><ArrowDownRight className="h-4 w-4 mr-2" /> Gider Ekle</Button>
         </div>

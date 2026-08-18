@@ -12,6 +12,7 @@ import Quotes from "@/pages/Quotes";
 import QuoteForm from "@/pages/QuoteForm";
 import QuoteView from "@/pages/QuoteView";
 import CashFlow from "@/pages/CashFlow";
+import Settings from "@/pages/Settings";
 import { Loader2 } from "lucide-react";
 
 function ProtectedRoute({ children }) {
@@ -61,6 +62,7 @@ function App() {
               <Route path="quotes/:id/edit" element={<QuoteForm />} />
               <Route path="quotes/:id" element={<QuoteView />} />
               <Route path="cashflow" element={<CashFlow />} />
+              <Route path="settings" element={<Settings />} />
             </Route>
           </Routes>
         </BrowserRouter>

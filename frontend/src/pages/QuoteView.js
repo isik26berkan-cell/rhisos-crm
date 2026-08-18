@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import api, { fmtMoney } from "@/lib/api";
+import api, { fmtMoney, LOGO_HORIZONTAL } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Printer, Pencil, Armchair } from "lucide-react";
+import { ArrowLeft, Printer, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
 const STATUS = {
@@ -18,9 +18,13 @@ export default function QuoteView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [quote, setQuote] = useState(null);
+  const [company, setCompany] = useState(null);
 
   const load = () => api.get(`/quotes/${id}`).then(({ data }) => setQuote(data));
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    load();
+    api.get("/settings").then(({ data }) => setCompany(data));
+  }, [id]);
 
   const changeStatus = async (status) => {
     await api.patch(`/quotes/${id}/status`, { status });
@@ -31,7 +35,7 @@ export default function QuoteView() {
   if (!quote) return <div className="p-8">Yükleniyor...</div>;
 
   return (
-    <div className="p-8 max-w-4xl">
+    <div className="p-8 max-w-4xl print-wrap">
       <div className="flex items-center justify-between mb-6 no-print flex-wrap gap-3">
         <Button variant="ghost" onClick={() => navigate("/quotes")}><ArrowLeft className="h-4 w-4 mr-2" /> Geri</Button>
         <div className="flex items-center gap-3">
@@ -50,14 +54,18 @@ export default function QuoteView() {
 
       <Card className="p-10 rounded-xl border shadow-none print-area bg-white">
         <div className="flex items-start justify-between pb-8 border-b">
-          <div className="flex items-center gap-3">
-            <div className="h-12 w-12 rounded-xl bg-primary flex items-center justify-center">
-              <Armchair className="h-6 w-6 text-warning" />
-            </div>
-            <div>
-              <div className="font-display font-bold text-2xl">Rhisos Mobilya</div>
-              <div className="text-sm text-muted-foreground">Teklif Belgesi</div>
-            </div>
+          <div className="flex items-center gap-4">
+            <img src={company?.logo || LOGO_HORIZONTAL} alt="Rhisos Mobilya" className="h-16 object-contain" data-testid="quote-logo" />
+            {(company?.company_name || company?.tagline || company?.phone || company?.email || company?.address || company?.tax_office || company?.tax_number) && (
+              <div className="text-xs text-muted-foreground space-y-0.5 border-l pl-4">
+                {company?.company_name && <div className="font-display font-bold text-base text-foreground" data-testid="quote-company-name">{company.company_name}</div>}
+                {company?.tagline && <div className="text-sm font-medium text-foreground">{company.tagline}</div>}
+                {company?.phone && <div>Tel: {company.phone}</div>}
+                {company?.email && <div>{company.email}</div>}
+                {company?.address && <div>{company.address}</div>}
+                {(company?.tax_office || company?.tax_number) && <div>VD: {company.tax_office} {company.tax_number}</div>}
+              </div>
+            )}
           </div>
           <div className="text-right">
             <div className="font-mono font-bold text-lg">{quote.quote_number}</div>

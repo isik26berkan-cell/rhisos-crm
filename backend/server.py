@@ -6,7 +6,10 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
+from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
+import io
+from datetime import date
 from motor.motor_asyncio import AsyncIOMotorClient
 import logging
 from pydantic import BaseModel, Field, EmailStr, BeforeValidator, ConfigDict
@@ -124,6 +127,17 @@ class TransactionIn(BaseModel):
     date: str
     currency: str = "TRY"
     quote_id: Optional[str] = None
+
+class SettingsIn(BaseModel):
+    company_name: str = "Rhisos Mobilya"
+    tagline: str = ""
+    address: str = ""
+    phone: str = ""
+    email: str = ""
+    website: str = ""
+    tax_office: str = ""
+    tax_number: str = ""
+    logo: str = ""  # base64 data URL
 
 # ---------------- Quote calc ----------------
 def compute_quote_totals(items, discount=0):
@@ -337,6 +351,80 @@ async def delete_quote(qid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 # ---------------- Transaction Routes ----------------
+@api_router.get("/transactions/export")
+async def export_transactions(
+    type: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    q = {}
+    if type:
+        q["type"] = type
+    if start or end:
+        q["date"] = {}
+        if start:
+            q["date"]["$gte"] = start
+        if end:
+            q["date"]["$lte"] = end
+    docs = await db.transactions.find(q).sort("date", 1).to_list(5000)
+
+    type_tr = {"income": "Gelir", "expense": "Gider"}
+    pay_tr = {"cash": "Nakit", "bank": "Banka/Havale", "card": "Kredi Kartı", "check": "Çek/Senet"}
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Kasa Raporu"
+    headers = ["Tarih", "Tür", "Kategori", "Ödeme Yöntemi", "Açıklama", "Tutar", "Para Birimi"]
+    ws.append(headers)
+    header_fill = PatternFill(start_color="4A3B32", end_color="4A3B32", fill_type="solid")
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    total_income = 0.0
+    total_expense = 0.0
+    for d in docs:
+        amt = d.get("amount", 0)
+        if d.get("type") == "income":
+            total_income += amt
+        else:
+            total_expense += amt
+        ws.append([
+            d.get("date", ""),
+            type_tr.get(d.get("type"), d.get("type")),
+            d.get("category", ""),
+            pay_tr.get(d.get("payment_method"), d.get("payment_method", "")),
+            d.get("description", ""),
+            amt,
+            d.get("currency", "TRY"),
+        ])
+
+    ws.append([])
+    ws.append(["", "", "", "", "Toplam Gelir", round(total_income, 2), ""])
+    ws.append(["", "", "", "", "Toplam Gider", round(total_expense, 2), ""])
+    ws.append(["", "", "", "", "Net Bakiye", round(total_income - total_expense, 2), ""])
+    for row in ws.iter_rows(min_row=ws.max_row - 2, max_row=ws.max_row):
+        row[4].font = Font(bold=True)
+        row[5].font = Font(bold=True)
+
+    widths = [14, 10, 20, 16, 40, 14, 12]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+
+    stream = io.BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=rhisos_kasa_raporu.xlsx"},
+    )
+
 @api_router.get("/transactions")
 async def list_transactions(
     type: Optional[str] = None,
@@ -385,6 +473,26 @@ async def delete_transaction(tid: str, user: dict = Depends(get_current_user)):
     await db.transactions.delete_one({"_id": ObjectId(tid)})
     return {"ok": True}
 
+# ---------------- Settings ----------------
+DEFAULT_SETTINGS = {
+    "company_name": "Rhisos Mobilya", "tagline": "", "address": "", "phone": "",
+    "email": "", "website": "", "tax_office": "", "tax_number": "", "logo": "",
+}
+
+@api_router.get("/settings")
+async def get_settings(user: dict = Depends(get_current_user)):
+    doc = await db.settings.find_one({"key": "company"})
+    if not doc:
+        return DEFAULT_SETTINGS
+    doc.pop("_id", None)
+    doc.pop("key", None)
+    return {**DEFAULT_SETTINGS, **doc}
+
+@api_router.put("/settings")
+async def update_settings(body: SettingsIn, user: dict = Depends(get_current_user)):
+    await db.settings.update_one({"key": "company"}, {"$set": {**body.model_dump(), "key": "company"}}, upsert=True)
+    return body.model_dump()
+
 # ---------------- Dashboard ----------------
 @api_router.get("/dashboard/stats")
 async def dashboard_stats(user: dict = Depends(get_current_user)):
@@ -411,8 +519,29 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
 
     quotes = await db.quotes.find().to_list(2000)
     quote_counts = {"pending": 0, "approved": 0, "rejected": 0}
+    expiring = []
+    today = datetime.now(timezone.utc).date()
+    soon = today + timedelta(days=7)
     for q in quotes:
-        quote_counts[q.get("status", "pending")] = quote_counts.get(q.get("status", "pending"), 0) + 1
+        st = q.get("status", "pending")
+        quote_counts[st] = quote_counts.get(st, 0) + 1
+        vu = q.get("valid_until")
+        if st == "pending" and vu:
+            try:
+                vu_date = date.fromisoformat(vu)
+            except (ValueError, TypeError):
+                continue
+            if vu_date <= soon:
+                expiring.append({
+                    "id": str(q["_id"]),
+                    "quote_number": q.get("quote_number"),
+                    "customer_name": q.get("customer_name"),
+                    "valid_until": vu,
+                    "days_left": (vu_date - today).days,
+                    "grand_total": q.get("grand_total", 0),
+                    "currency": q.get("currency", "TRY"),
+                })
+    expiring.sort(key=lambda x: x["days_left"])
 
     customer_count = await db.customers.count_documents({})
 
@@ -425,6 +554,7 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
         "quote_counts": quote_counts,
         "total_quotes": len(quotes),
         "customer_count": customer_count,
+        "expiring_quotes": expiring,
     }
 
 # ---------------- App wiring ----------------
