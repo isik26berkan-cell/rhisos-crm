@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 5 validates the MongoDB->MySQL migration. Backend now uses SQLAlchemy 2.x async + aiomysql against MariaDB (127.0.0.1:3306, DB rhisos_crm). Login returns UUID id (36 chars) instead of Mongo ObjectId. All previously written pytest suites pass unchanged against the new backend and API response shapes are preserved. Added 2 new tests: TestAuth::test_logout_clears_cookies and TestAuth::test_bruteforce_lockout_returns_429 (uses bogus @example.com email so admin lockout is not triggered). Full suite: 59/59 PASSED in 7.9s. Frontend smoke: login OK, dashboard renders stat-income + monthly-profit-card, customers page opens Yeni Müşteri modal, cash flow shows export-excel-button, settings page loads. All test data cleaned: MySQL now has 0 customers, 0 quotes, 0 quote_items, 0 payments, 0 transactions, 0 login_attempts, and only the admin user remains. Settings reset to defaults.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_rhisos_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 997 lines — beyond the 700-line guideline. Split into routers/{auth,customers,quotes,payments,transactions,settings,public,email}.py and models.py/db.py.",
+    "quote_number generation still uses count-based logic and is race-prone under concurrent POSTs. In MySQL prefer SELECT MAX(...) FOR UPDATE inside the same transaction, or a dedicated sequence table with row lock.",
+    "add_quote_payment writes both the Payment row and the auto income Transaction; ensure both happen inside the SAME db session/commit so a failure between them cannot leave orphan/duplicate rows. Same concern for delete_payment.",
+    "compute_quote_totals applies VAT on pre-discount subtotal (grand = subtotal + vat - discount). Confirmed intentional per iter3 note; keep documented.",
+    "monthly-profit filter still uses string prefix on ISO date; correct but reliant on YYYY-MM-DD storage — enforce a CHECK or use DATE column type in MySQL to be safe.",
+    "LoginAttempt identifier is IP:email; behind K8s ingress, request.client.host may be a shared proxy IP, meaning legitimate users on the same egress could be locked out. Consider trusting X-Forwarded-For and rate-limiting per email only.",
+    "EmailStr blocks .test/.local TLDs (encountered 422 during brute-force test) — this is Pydantic email-validator behaviour; acceptable but document that test emails must use example.com.",
+    "Public endpoint GET /api/public/quotes/{qid}: since IDs are now UUIDs, the previous invalid-ObjectId 404 branch still works (any non-matching id returns 404). Verified."
+  ],
+  "updated_files": ["/app/backend/tests/test_rhisos_backend.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin: iskberkan@gmail.com / rhisos2026",
+  "seed_data_creation": "None left behind. Final DB state: users=1 (admin only), customers=0, quotes=0, quote_items=0, payments=0, transactions=0, settings reset to defaults, login_attempts=0.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend is now MySQL (SQLAlchemy async / aiomysql). IDs are 36-char UUID strings; adapt any hardcoded 24-char ObjectId assertions. DB inspection: mysql -h 127.0.0.1 -u rhisos -prhisos_pass_2026 rhisos_crm. Tables: users, customers, quotes, quote_items, payments, transactions, settings, login_attempts. Regression suite (/app/backend/tests/test_rhisos_backend.py) is 59 tests, ~8s parallel. New tests added in TestAuth: test_logout_clears_cookies and test_bruteforce_lockout_returns_429. Pydantic EmailStr rejects .test/.local TLDs — always use @example.com for synthetic emails.",
+  "rca of the issue": "N/A - migration is behaviour-identical; all API URLs, response shapes, and computed totals match the Mongo-era expectations."
+}

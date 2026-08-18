@@ -9,35 +9,154 @@ from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depend
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 import io
-from datetime import date
-from motor.motor_asyncio import AsyncIOMotorClient
 import logging
-from pydantic import BaseModel, Field, EmailStr, BeforeValidator, ConfigDict
-from typing import List, Optional, Annotated, Literal
-from datetime import datetime, timezone, timedelta
-from bson import ObjectId
-import bcrypt
-import jwt
-import secrets
+from datetime import datetime, timezone, timedelta, date
+from typing import List, Optional, Literal
+from urllib.parse import quote_plus, urlparse
 import uuid
 import re
 import ipaddress
 import httpx
 from html import escape
 from html.parser import HTMLParser
-from urllib.parse import urlparse
 
-# ---------------- DB ----------------
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+import bcrypt
+import jwt
 
+from pydantic import BaseModel, EmailStr
+from sqlalchemy import Column, String, Float, Integer, Boolean, Text, select, func, delete as sa_delete
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.orm import declarative_base
+from sqlalchemy.dialects.mysql import LONGTEXT
+
+# ---------------- Database ----------------
+DB_HOST = os.environ["DB_HOST"]
+DB_PORT = os.environ["DB_PORT"]
+DB_NAME = os.environ["DB_NAME"]
+DB_USER = os.environ["DB_USER"]
+DB_PASSWORD = os.environ["DB_PASSWORD"]
+
+DATABASE_URL = (
+    f"mysql+aiomysql://{DB_USER}:{quote_plus(DB_PASSWORD)}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+)
+
+engine = create_async_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600, echo=False)
+AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+Base = declarative_base()
+
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield session
+
+def new_id() -> str:
+    return str(uuid.uuid4())
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+# ---------------- ORM Models ----------------
+class User(Base):
+    __tablename__ = "users"
+    id = Column(String(36), primary_key=True, default=new_id)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    name = Column(String(255))
+    role = Column(String(50), default="user")
+    created_at = Column(String(50))
+
+class Customer(Base):
+    __tablename__ = "customers"
+    id = Column(String(36), primary_key=True, default=new_id)
+    name = Column(String(255), nullable=False)
+    company = Column(String(255), default="")
+    email = Column(String(255), default="")
+    phone = Column(String(100), default="")
+    address = Column(Text)
+    notes = Column(Text)
+    created_at = Column(String(50))
+
+class Quote(Base):
+    __tablename__ = "quotes"
+    id = Column(String(36), primary_key=True, default=new_id)
+    quote_number = Column(String(50))
+    customer_id = Column(String(36), index=True)
+    customer_name = Column(String(255))
+    title = Column(String(255))
+    currency = Column(String(10), default="TRY")
+    notes = Column(Text)
+    valid_until = Column(String(20), default="")
+    status = Column(String(20), default="pending")
+    subtotal = Column(Float, default=0)
+    vat_total = Column(Float, default=0)
+    discount = Column(Float, default=0)
+    grand_total = Column(Float, default=0)
+    paid_total = Column(Float, default=0)
+    created_at = Column(String(50))
+    created_by = Column(String(255))
+    emailed_at = Column(String(50), nullable=True)
+    emailed_to = Column(String(255), nullable=True)
+
+class QuoteItem(Base):
+    __tablename__ = "quote_items"
+    id = Column(String(36), primary_key=True, default=new_id)
+    quote_id = Column(String(36), index=True, nullable=False)
+    description = Column(Text)
+    quantity = Column(Float, default=1)
+    unit_price = Column(Float, default=0)
+    vat_rate = Column(Float, default=20)
+    position = Column(Integer, default=0)
+
+class Payment(Base):
+    __tablename__ = "payments"
+    id = Column(String(36), primary_key=True, default=new_id)
+    quote_id = Column(String(36), index=True, nullable=False)
+    amount = Column(Float, default=0)
+    date = Column(String(20))
+    method = Column(String(20), default="cash")
+    note = Column(Text)
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+    id = Column(String(36), primary_key=True, default=new_id)
+    type = Column(String(20), index=True)
+    amount = Column(Float, default=0)
+    category = Column(String(255))
+    payment_method = Column(String(20), default="cash")
+    description = Column(Text)
+    date = Column(String(20), index=True)
+    currency = Column(String(10), default="TRY")
+    quote_id = Column(String(36), nullable=True, index=True)
+    payment_id = Column(String(36), nullable=True, index=True)
+    auto = Column(Boolean, default=False)
+    created_at = Column(String(50))
+
+class Settings(Base):
+    __tablename__ = "settings"
+    key = Column(String(50), primary_key=True)
+    company_name = Column(String(255), default="Rhisos Mobilya")
+    tagline = Column(String(255), default="")
+    address = Column(Text)
+    phone = Column(String(100), default="")
+    email = Column(String(255), default="")
+    website = Column(String(255), default="")
+    tax_office = Column(String(255), default="")
+    tax_number = Column(String(100), default="")
+    logo = Column(LONGTEXT)
+
+class LoginAttempt(Base):
+    __tablename__ = "login_attempts"
+    identifier = Column(String(255), primary_key=True)
+    count = Column(Integer, default=0)
+    locked_until = Column(String(50), nullable=True)
+
+# ---------------- App ----------------
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
 JWT_ALGORITHM = "HS256"
 
-# ---------------- Helpers ----------------
+# ---------------- Auth helpers ----------------
 def get_jwt_secret() -> str:
     return os.environ["JWT_SECRET"]
 
@@ -59,11 +178,6 @@ def set_auth_cookies(response: Response, access: str, refresh: str):
     response.set_cookie("access_token", access, httponly=True, secure=True, samesite="none", max_age=3600, path="/")
     response.set_cookie("refresh_token", refresh, httponly=True, secure=True, samesite="none", max_age=604800, path="/")
 
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-PyObjectId = Annotated[str, BeforeValidator(str)]
-
 async def get_current_user(request: Request) -> dict:
     token = request.cookies.get("access_token")
     if not token:
@@ -76,19 +190,17 @@ async def get_current_user(request: Request) -> dict:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Geçersiz token tipi")
-        user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
-        if not user:
-            raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı")
-        user["id"] = str(user["_id"])
-        user.pop("_id", None)
-        user.pop("password_hash", None)
-        return user
+        async with AsyncSessionLocal() as db:
+            user = await db.get(User, payload["sub"])
+            if not user:
+                raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı")
+            return {"id": user.id, "email": user.email, "name": user.name, "role": user.role, "created_at": user.created_at}
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Oturum süresi doldu")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Geçersiz token")
 
-# ---------------- Models ----------------
+# ---------------- Pydantic Schemas ----------------
 class RegisterIn(BaseModel):
     email: EmailStr
     password: str
@@ -110,7 +222,7 @@ class LineItem(BaseModel):
     description: str
     quantity: float = 1
     unit_price: float = 0
-    vat_rate: float = 20  # KDV %
+    vat_rate: float = 20
 
 class QuoteIn(BaseModel):
     customer_id: str
@@ -144,7 +256,7 @@ class SettingsIn(BaseModel):
     website: str = ""
     tax_office: str = ""
     tax_number: str = ""
-    logo: str = ""  # base64 data URL
+    logo: str = ""
 
 class PaymentIn(BaseModel):
     amount: float
@@ -152,7 +264,52 @@ class PaymentIn(BaseModel):
     method: str = "cash"
     note: Optional[str] = ""
 
-# ---------------- Quote calc ----------------
+# ---------------- Serializers ----------------
+def customer_dict(c: Customer) -> dict:
+    return {"id": c.id, "name": c.name, "company": c.company or "", "email": c.email or "",
+            "phone": c.phone or "", "address": c.address or "", "notes": c.notes or "", "created_at": c.created_at}
+
+def transaction_dict(t: Transaction) -> dict:
+    return {"id": t.id, "type": t.type, "amount": t.amount, "category": t.category,
+            "payment_method": t.payment_method, "description": t.description or "", "date": t.date,
+            "currency": t.currency, "quote_id": t.quote_id, "payment_id": t.payment_id,
+            "auto": bool(t.auto), "created_at": t.created_at}
+
+def quote_dict(q: Quote, items: List[QuoteItem], payments: List[Payment]) -> dict:
+    return {
+        "id": q.id, "quote_number": q.quote_number, "customer_id": q.customer_id,
+        "customer_name": q.customer_name, "title": q.title,
+        "items": [{"description": i.description, "quantity": i.quantity, "unit_price": i.unit_price, "vat_rate": i.vat_rate} for i in items],
+        "currency": q.currency, "notes": q.notes or "", "valid_until": q.valid_until or "",
+        "status": q.status,
+        "payments": [{"id": p.id, "amount": p.amount, "date": p.date, "method": p.method, "note": p.note or ""} for p in payments],
+        "paid_total": q.paid_total or 0,
+        "subtotal": q.subtotal, "vat_total": q.vat_total, "discount": q.discount, "grand_total": q.grand_total,
+        "created_at": q.created_at, "created_by": q.created_by,
+        "emailed_at": q.emailed_at, "emailed_to": q.emailed_to,
+    }
+
+DEFAULT_SETTINGS = {
+    "company_name": "Rhisos Mobilya", "tagline": "", "address": "", "phone": "",
+    "email": "", "website": "", "tax_office": "", "tax_number": "", "logo": "",
+}
+
+def settings_dict(s: Settings) -> dict:
+    return {
+        "company_name": s.company_name or "Rhisos Mobilya", "tagline": s.tagline or "",
+        "address": s.address or "", "phone": s.phone or "", "email": s.email or "",
+        "website": s.website or "", "tax_office": s.tax_office or "", "tax_number": s.tax_number or "",
+        "logo": s.logo or "",
+    }
+
+async def load_quote_items(db: AsyncSession, qid: str) -> List[QuoteItem]:
+    res = await db.execute(select(QuoteItem).where(QuoteItem.quote_id == qid).order_by(QuoteItem.position))
+    return res.scalars().all()
+
+async def load_quote_payments(db: AsyncSession, qid: str) -> List[Payment]:
+    res = await db.execute(select(Payment).where(Payment.quote_id == qid).order_by(Payment.date))
+    return res.scalars().all()
+
 def compute_quote_totals(items, discount=0):
     subtotal = 0.0
     vat_total = 0.0
@@ -160,15 +317,9 @@ def compute_quote_totals(items, discount=0):
         line = it["quantity"] * it["unit_price"]
         subtotal += line
         vat_total += line * (it["vat_rate"] / 100.0)
-    subtotal_after_disc = subtotal - discount
-    # apply discount proportionally to vat? keep simple: vat on pre-discount
-    grand_total = subtotal_after_disc + vat_total
-    return {
-        "subtotal": round(subtotal, 2),
-        "vat_total": round(vat_total, 2),
-        "discount": round(discount, 2),
-        "grand_total": round(grand_total, 2),
-    }
+    grand_total = (subtotal - discount) + vat_total
+    return {"subtotal": round(subtotal, 2), "vat_total": round(vat_total, 2),
+            "discount": round(discount, 2), "grand_total": round(grand_total, 2)}
 
 # ---------------- Email (Emergent managed Resend) ----------------
 EMAIL_BASE_URL = "https://integrations.emergentagent.com"
@@ -324,38 +475,43 @@ def build_quote_email_html(doc: dict, settings_doc: dict) -> str:
 
 # ---------------- Auth Routes ----------------
 @api_router.post("/auth/register")
-async def register(body: RegisterIn, response: Response):
+async def register(body: RegisterIn, response: Response, db: AsyncSession = Depends(get_db)):
     email = body.email.lower()
-    if await db.users.find_one({"email": email}):
+    existing = await db.execute(select(User).where(User.email == email))
+    if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Bu email zaten kayıtlı")
-    doc = {"email": email, "password_hash": hash_password(body.password), "name": body.name, "role": "user", "created_at": now_iso()}
-    res = await db.users.insert_one(doc)
-    uid = str(res.inserted_id)
-    set_auth_cookies(response, create_access_token(uid, email), create_refresh_token(uid))
-    return {"id": uid, "email": email, "name": body.name, "role": "user"}
+    user = User(id=new_id(), email=email, password_hash=hash_password(body.password),
+                name=body.name, role="user", created_at=now_iso())
+    db.add(user)
+    await db.commit()
+    set_auth_cookies(response, create_access_token(user.id, email), create_refresh_token(user.id))
+    return {"id": user.id, "email": email, "name": body.name, "role": "user"}
 
 @api_router.post("/auth/login")
-async def login(body: LoginIn, request: Request, response: Response):
+async def login(body: LoginIn, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     email = body.email.lower()
     ip = request.client.host if request.client else "unknown"
     ident = f"{ip}:{email}"
-    attempt = await db.login_attempts.find_one({"identifier": ident})
-    if attempt and attempt.get("count", 0) >= 5:
-        locked_until = attempt.get("locked_until")
-        if locked_until and datetime.fromisoformat(locked_until) > datetime.now(timezone.utc):
+    attempt = await db.get(LoginAttempt, ident)
+    if attempt and (attempt.count or 0) >= 5 and attempt.locked_until:
+        if datetime.fromisoformat(attempt.locked_until) > datetime.now(timezone.utc):
             raise HTTPException(status_code=429, detail="Çok fazla başarısız deneme. 15 dakika sonra tekrar deneyin.")
-    user = await db.users.find_one({"email": email})
-    if not user or not verify_password(body.password, user["password_hash"]):
-        await db.login_attempts.update_one(
-            {"identifier": ident},
-            {"$inc": {"count": 1}, "$set": {"locked_until": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()}},
-            upsert=True,
-        )
+    res = await db.execute(select(User).where(User.email == email))
+    user = res.scalar_one_or_none()
+    if not user or not verify_password(body.password, user.password_hash):
+        locked = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+        if attempt:
+            attempt.count = (attempt.count or 0) + 1
+            attempt.locked_until = locked
+        else:
+            db.add(LoginAttempt(identifier=ident, count=1, locked_until=locked))
+        await db.commit()
         raise HTTPException(status_code=401, detail="Email veya şifre hatalı")
-    await db.login_attempts.delete_one({"identifier": ident})
-    uid = str(user["_id"])
-    set_auth_cookies(response, create_access_token(uid, email), create_refresh_token(uid))
-    return {"id": uid, "email": email, "name": user.get("name"), "role": user.get("role", "user")}
+    if attempt:
+        await db.delete(attempt)
+        await db.commit()
+    set_auth_cookies(response, create_access_token(user.id, email), create_refresh_token(user.id))
+    return {"id": user.id, "email": email, "name": user.name, "role": user.role or "user"}
 
 @api_router.post("/auth/logout")
 async def logout(response: Response, user: dict = Depends(get_current_user)):
@@ -368,7 +524,7 @@ async def me(user: dict = Depends(get_current_user)):
     return user
 
 @api_router.post("/auth/refresh")
-async def refresh(request: Request, response: Response):
+async def refresh(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     token = request.cookies.get("refresh_token")
     if not token:
         raise HTTPException(status_code=401, detail="Refresh token yok")
@@ -376,10 +532,10 @@ async def refresh(request: Request, response: Response):
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         if payload.get("type") != "refresh":
             raise HTTPException(status_code=401, detail="Geçersiz token")
-        user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
+        user = await db.get(User, payload["sub"])
         if not user:
             raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı")
-        access = create_access_token(str(user["_id"]), user["email"])
+        access = create_access_token(user.id, user.email)
         response.set_cookie("access_token", access, httponly=True, secure=True, samesite="none", max_age=3600, path="/")
         return {"ok": True}
     except jwt.InvalidTokenError:
@@ -387,256 +543,251 @@ async def refresh(request: Request, response: Response):
 
 # ---------------- Customer Routes ----------------
 @api_router.get("/customers")
-async def list_customers(user: dict = Depends(get_current_user)):
-    docs = await db.customers.find().sort("created_at", -1).to_list(1000)
-    for d in docs:
-        d["id"] = str(d.pop("_id"))
-    return docs
+async def list_customers(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(Customer).order_by(Customer.created_at.desc()))
+    return [customer_dict(c) for c in res.scalars().all()]
 
 @api_router.post("/customers")
-async def create_customer(body: CustomerIn, user: dict = Depends(get_current_user)):
-    doc = body.model_dump()
-    doc["created_at"] = now_iso()
-    res = await db.customers.insert_one(doc)
-    doc["id"] = str(res.inserted_id)
-    doc.pop("_id", None)
-    return doc
-
-@api_router.put("/customers/{cid}")
-async def update_customer(cid: str, body: CustomerIn, user: dict = Depends(get_current_user)):
-    await db.customers.update_one({"_id": ObjectId(cid)}, {"$set": body.model_dump()})
-    doc = await db.customers.find_one({"_id": ObjectId(cid)})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Müşteri bulunamadı")
-    doc["id"] = str(doc.pop("_id"))
-    return doc
+async def create_customer(body: CustomerIn, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    c = Customer(id=new_id(), created_at=now_iso(), **body.model_dump())
+    db.add(c)
+    await db.commit()
+    return customer_dict(c)
 
 @api_router.get("/customers/{cid}")
-async def get_customer(cid: str, user: dict = Depends(get_current_user)):
-    doc = await db.customers.find_one({"_id": ObjectId(cid)})
-    if not doc:
+async def get_customer(cid: str, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    c = await db.get(Customer, cid)
+    if not c:
         raise HTTPException(status_code=404, detail="Müşteri bulunamadı")
-    doc["id"] = str(doc.pop("_id"))
-    return doc
+    return customer_dict(c)
+
+@api_router.put("/customers/{cid}")
+async def update_customer(cid: str, body: CustomerIn, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    c = await db.get(Customer, cid)
+    if not c:
+        raise HTTPException(status_code=404, detail="Müşteri bulunamadı")
+    for k, v in body.model_dump().items():
+        setattr(c, k, v)
+    await db.commit()
+    return customer_dict(c)
 
 @api_router.delete("/customers/{cid}")
-async def delete_customer(cid: str, user: dict = Depends(get_current_user)):
-    await db.customers.delete_one({"_id": ObjectId(cid)})
+async def delete_customer(cid: str, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    c = await db.get(Customer, cid)
+    if c:
+        await db.delete(c)
+        await db.commit()
     return {"ok": True}
 
 @api_router.get("/customers/{cid}/history")
-async def customer_history(cid: str, user: dict = Depends(get_current_user)):
-    customer = await db.customers.find_one({"_id": ObjectId(cid)})
+async def customer_history(cid: str, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    customer = await db.get(Customer, cid)
     if not customer:
         raise HTTPException(status_code=404, detail="Müşteri bulunamadı")
-    customer["id"] = str(customer.pop("_id"))
-    quotes = await db.quotes.find({"customer_id": cid}).sort("created_at", -1).to_list(1000)
-    quote_ids = []
-    for q in quotes:
-        q["id"] = str(q.pop("_id"))
-        quote_ids.append(q["id"])
+    res = await db.execute(select(Quote).where(Quote.customer_id == cid).order_by(Quote.created_at.desc()))
+    quotes = res.scalars().all()
+    quote_dicts = []
     payments = []
     for q in quotes:
-        for p in q.get("payments", []):
-            payments.append({**p, "quote_id": q["id"], "quote_number": q.get("quote_number"), "currency": q.get("currency", "TRY")})
+        items = await load_quote_items(db, q.id)
+        pays = await load_quote_payments(db, q.id)
+        quote_dicts.append(quote_dict(q, items, pays))
+        for p in pays:
+            payments.append({"id": p.id, "amount": p.amount, "date": p.date, "method": p.method,
+                             "note": p.note or "", "quote_id": q.id, "quote_number": q.quote_number, "currency": q.currency})
     payments.sort(key=lambda x: x.get("date", ""), reverse=True)
-    total_quoted = round(sum(q.get("grand_total", 0) for q in quotes), 2)
-    total_approved = round(sum(q.get("grand_total", 0) for q in quotes if q.get("status") == "approved"), 2)
+    total_quoted = round(sum(q.grand_total or 0 for q in quotes), 2)
+    total_approved = round(sum(q.grand_total or 0 for q in quotes if q.status == "approved"), 2)
     total_paid = round(sum(p["amount"] for p in payments), 2)
     return {
-        "customer": customer,
-        "quotes": quotes,
+        "customer": customer_dict(customer),
+        "quotes": quote_dicts,
         "payments": payments,
-        "totals": {
-            "total_quoted": total_quoted,
-            "total_approved": total_approved,
-            "total_paid": total_paid,
-            "quote_count": len(quotes),
-        },
+        "totals": {"total_quoted": total_quoted, "total_approved": total_approved,
+                   "total_paid": total_paid, "quote_count": len(quotes)},
     }
 
 # ---------------- Quote Routes ----------------
-async def next_quote_number():
-    count = await db.quotes.count_documents({})
+async def next_quote_number(db: AsyncSession) -> str:
+    res = await db.execute(select(func.count(Quote.id)))
+    count = res.scalar_one()
     return f"TKF-{datetime.now().year}-{count + 1:04d}"
 
 @api_router.get("/quotes")
-async def list_quotes(user: dict = Depends(get_current_user)):
-    docs = await db.quotes.find().sort("created_at", -1).to_list(1000)
-    for d in docs:
-        d["id"] = str(d.pop("_id"))
-    return docs
+async def list_quotes(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(Quote).order_by(Quote.created_at.desc()))
+    quotes = res.scalars().all()
+    out = []
+    for q in quotes:
+        items = await load_quote_items(db, q.id)
+        pays = await load_quote_payments(db, q.id)
+        out.append(quote_dict(q, items, pays))
+    return out
 
 @api_router.get("/quotes/{qid}")
-async def get_quote(qid: str, user: dict = Depends(get_current_user)):
-    doc = await db.quotes.find_one({"_id": ObjectId(qid)})
-    if not doc:
+async def get_quote(qid: str, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    q = await db.get(Quote, qid)
+    if not q:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı")
-    doc["id"] = str(doc.pop("_id"))
-    return doc
+    items = await load_quote_items(db, qid)
+    pays = await load_quote_payments(db, qid)
+    return quote_dict(q, items, pays)
 
 @api_router.post("/quotes")
-async def create_quote(body: QuoteIn, user: dict = Depends(get_current_user)):
+async def create_quote(body: QuoteIn, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     items = [i.model_dump() for i in body.items]
     totals = compute_quote_totals(items, body.discount)
-    doc = {
-        "quote_number": await next_quote_number(),
-        "customer_id": body.customer_id,
-        "customer_name": body.customer_name,
-        "title": body.title,
-        "items": items,
-        "currency": body.currency,
-        "notes": body.notes,
-        "valid_until": body.valid_until,
-        "status": "pending",
-        "payments": [],
-        "paid_total": 0,
-        **totals,
-        "created_at": now_iso(),
-        "created_by": user["name"],
-    }
-    res = await db.quotes.insert_one(doc)
-    doc["id"] = str(res.inserted_id)
-    doc.pop("_id", None)
-    return doc
+    qid = new_id()
+    q = Quote(
+        id=qid, quote_number=await next_quote_number(db), customer_id=body.customer_id,
+        customer_name=body.customer_name, title=body.title, currency=body.currency,
+        notes=body.notes, valid_until=body.valid_until, status="pending", paid_total=0,
+        created_at=now_iso(), created_by=user["name"], **totals,
+    )
+    db.add(q)
+    for idx, it in enumerate(items):
+        db.add(QuoteItem(id=new_id(), quote_id=qid, position=idx, **it))
+    await db.commit()
+    item_objs = await load_quote_items(db, qid)
+    return quote_dict(q, item_objs, [])
 
 @api_router.put("/quotes/{qid}")
-async def update_quote(qid: str, body: QuoteIn, user: dict = Depends(get_current_user)):
+async def update_quote(qid: str, body: QuoteIn, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    q = await db.get(Quote, qid)
+    if not q:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı")
     items = [i.model_dump() for i in body.items]
     totals = compute_quote_totals(items, body.discount)
-    update = {
-        "customer_id": body.customer_id,
-        "customer_name": body.customer_name,
-        "title": body.title,
-        "items": items,
-        "currency": body.currency,
-        "notes": body.notes,
-        "valid_until": body.valid_until,
-        **totals,
-    }
-    await db.quotes.update_one({"_id": ObjectId(qid)}, {"$set": update})
-    doc = await db.quotes.find_one({"_id": ObjectId(qid)})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Teklif bulunamadı")
-    doc["id"] = str(doc.pop("_id"))
-    return doc
+    q.customer_id = body.customer_id
+    q.customer_name = body.customer_name
+    q.title = body.title
+    q.currency = body.currency
+    q.notes = body.notes
+    q.valid_until = body.valid_until
+    q.subtotal = totals["subtotal"]
+    q.vat_total = totals["vat_total"]
+    q.discount = totals["discount"]
+    q.grand_total = totals["grand_total"]
+    await db.execute(sa_delete(QuoteItem).where(QuoteItem.quote_id == qid))
+    for idx, it in enumerate(items):
+        db.add(QuoteItem(id=new_id(), quote_id=qid, position=idx, **it))
+    await db.commit()
+    item_objs = await load_quote_items(db, qid)
+    pays = await load_quote_payments(db, qid)
+    return quote_dict(q, item_objs, pays)
 
 @api_router.patch("/quotes/{qid}/status")
-async def update_quote_status(qid: str, body: QuoteStatusIn, user: dict = Depends(get_current_user)):
-    doc = await db.quotes.find_one({"_id": ObjectId(qid)})
-    if not doc:
+async def update_quote_status(qid: str, body: QuoteStatusIn, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    q = await db.get(Quote, qid)
+    if not q:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı")
-    await db.quotes.update_one({"_id": ObjectId(qid)}, {"$set": {"status": body.status}})
-    updated = await db.quotes.find_one({"_id": ObjectId(qid)})
-    updated["id"] = str(updated.pop("_id"))
-    return updated
+    q.status = body.status
+    await db.commit()
+    items = await load_quote_items(db, qid)
+    pays = await load_quote_payments(db, qid)
+    return quote_dict(q, items, pays)
 
 @api_router.post("/quotes/{qid}/payments")
-async def add_quote_payment(qid: str, body: PaymentIn, user: dict = Depends(get_current_user)):
-    doc = await db.quotes.find_one({"_id": ObjectId(qid)})
-    if not doc:
+async def add_quote_payment(qid: str, body: PaymentIn, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    q = await db.get(Quote, qid)
+    if not q:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı")
     if body.amount <= 0:
         raise HTTPException(status_code=400, detail="Geçerli bir tutar girin")
-    pid = str(uuid.uuid4())
-    payment = {"id": pid, "amount": round(body.amount, 2), "date": body.date, "method": body.method, "note": body.note or ""}
-    payments = doc.get("payments", []) + [payment]
-    paid_total = round(sum(p["amount"] for p in payments), 2)
-    await db.quotes.update_one({"_id": ObjectId(qid)}, {"$set": {"payments": payments, "paid_total": paid_total}})
-    # linked income transaction so cash flow reflects real money in
-    await db.transactions.insert_one({
-        "type": "income",
-        "amount": payment["amount"],
-        "category": "Kapora / Teklif Ödemesi",
-        "payment_method": body.method,
-        "description": f"{doc['quote_number']} - {doc['customer_name']} ödemesi",
-        "date": body.date,
-        "currency": doc.get("currency", "TRY"),
-        "quote_id": qid,
-        "payment_id": pid,
-        "auto": True,
-        "created_at": now_iso(),
-    })
-    updated = await db.quotes.find_one({"_id": ObjectId(qid)})
-    updated["id"] = str(updated.pop("_id"))
-    return updated
+    pid = new_id()
+    db.add(Payment(id=pid, quote_id=qid, amount=round(body.amount, 2), date=body.date, method=body.method, note=body.note or ""))
+    await db.flush()
+    pays = await load_quote_payments(db, qid)
+    q.paid_total = round(sum(p.amount for p in pays), 2)
+    db.add(Transaction(
+        id=new_id(), type="income", amount=round(body.amount, 2), category="Kapora / Teklif Ödemesi",
+        payment_method=body.method, description=f"{q.quote_number} - {q.customer_name} ödemesi",
+        date=body.date, currency=q.currency, quote_id=qid, payment_id=pid, auto=True, created_at=now_iso(),
+    ))
+    await db.commit()
+    items = await load_quote_items(db, qid)
+    pays = await load_quote_payments(db, qid)
+    return quote_dict(q, items, pays)
 
 @api_router.delete("/quotes/{qid}/payments/{pid}")
-async def delete_quote_payment(qid: str, pid: str, user: dict = Depends(get_current_user)):
-    doc = await db.quotes.find_one({"_id": ObjectId(qid)})
-    if not doc:
+async def delete_quote_payment(qid: str, pid: str, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    q = await db.get(Quote, qid)
+    if not q:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı")
-    payments = [p for p in doc.get("payments", []) if p.get("id") != pid]
-    paid_total = round(sum(p["amount"] for p in payments), 2)
-    await db.quotes.update_one({"_id": ObjectId(qid)}, {"$set": {"payments": payments, "paid_total": paid_total}})
-    await db.transactions.delete_one({"payment_id": pid})
-    updated = await db.quotes.find_one({"_id": ObjectId(qid)})
-    updated["id"] = str(updated.pop("_id"))
-    return updated
+    p = await db.get(Payment, pid)
+    if p:
+        await db.delete(p)
+    await db.execute(sa_delete(Transaction).where(Transaction.payment_id == pid))
+    await db.flush()
+    pays = await load_quote_payments(db, qid)
+    q.paid_total = round(sum(x.amount for x in pays), 2)
+    await db.commit()
+    items = await load_quote_items(db, qid)
+    pays = await load_quote_payments(db, qid)
+    return quote_dict(q, items, pays)
 
 @api_router.post("/quotes/{qid}/email")
-async def email_quote(qid: str, user: dict = Depends(get_current_user)):
-    doc = await db.quotes.find_one({"_id": ObjectId(qid)})
-    if not doc:
+async def email_quote(qid: str, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    q = await db.get(Quote, qid)
+    if not q:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı")
-    customer = None
-    try:
-        customer = await db.customers.find_one({"_id": ObjectId(doc["customer_id"])})
-    except Exception:
-        customer = None
-    to_email = (customer or {}).get("email", "").strip()
+    customer = await db.get(Customer, q.customer_id)
+    to_email = ((customer.email if customer else "") or "").strip()
     if not to_email:
         raise HTTPException(status_code=400, detail="Müşterinin kayıtlı e-posta adresi yok. Önce müşteriye e-posta ekleyin.")
-    settings_doc = await db.settings.find_one({"key": "company"}) or {}
-    subject = f"{EMAIL_FROM_NAME} - Teklif {doc['quote_number']}"
-    html = build_quote_email_html(doc, settings_doc)
+    settings_row = await db.get(Settings, "company")
+    settings_data = settings_dict(settings_row) if settings_row else DEFAULT_SETTINGS
+    items = await load_quote_items(db, qid)
+    pays = await load_quote_payments(db, qid)
+    doc = quote_dict(q, items, pays)
+    subject = f"{EMAIL_FROM_NAME} - Teklif {q.quote_number}"
+    html = build_quote_email_html(doc, settings_data)
     email_id = await send_email(to=to_email, subject=subject, html=html)
-    await db.quotes.update_one({"_id": ObjectId(qid)}, {"$set": {"emailed_at": now_iso(), "emailed_to": to_email}})
+    q.emailed_at = now_iso()
+    q.emailed_to = to_email
+    await db.commit()
     return {"ok": True, "email_id": email_id, "to": to_email}
 
 @api_router.delete("/quotes/{qid}")
-async def delete_quote(qid: str, user: dict = Depends(get_current_user)):
-    await db.quotes.delete_one({"_id": ObjectId(qid)})
-    await db.transactions.delete_many({"quote_id": qid, "auto": True})
+async def delete_quote(qid: str, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    q = await db.get(Quote, qid)
+    if q:
+        await db.delete(q)
+    await db.execute(sa_delete(QuoteItem).where(QuoteItem.quote_id == qid))
+    await db.execute(sa_delete(Payment).where(Payment.quote_id == qid))
+    await db.execute(sa_delete(Transaction).where(Transaction.quote_id == qid))
+    await db.commit()
     return {"ok": True}
 
 # ---------------- Public (no auth) ----------------
 @api_router.get("/public/quotes/{qid}")
-async def public_quote(qid: str):
-    try:
-        doc = await db.quotes.find_one({"_id": ObjectId(qid)})
-    except Exception:
+async def public_quote(qid: str, db: AsyncSession = Depends(get_db)):
+    q = await db.get(Quote, qid)
+    if not q:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı")
-    if not doc:
-        raise HTTPException(status_code=404, detail="Teklif bulunamadı")
-    doc["id"] = str(doc.pop("_id"))
-    settings_doc = await db.settings.find_one({"key": "company"}) or {}
-    settings_doc.pop("_id", None)
-    settings_doc.pop("key", None)
-    company = {**DEFAULT_SETTINGS, **settings_doc}
-    return {"quote": doc, "company": company}
+    items = await load_quote_items(db, qid)
+    pays = await load_quote_payments(db, qid)
+    settings_row = await db.get(Settings, "company")
+    company = {**DEFAULT_SETTINGS, **(settings_dict(settings_row) if settings_row else {})}
+    return {"quote": quote_dict(q, items, pays), "company": company}
 
 # ---------------- Transaction Routes ----------------
 @api_router.get("/transactions/export")
-async def export_transactions(
-    type: Optional[str] = None,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    user: dict = Depends(get_current_user),
-):
+async def export_transactions(type: Optional[str] = None, start: Optional[str] = None, end: Optional[str] = None,
+                              user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment
 
-    q = {}
+    stmt = select(Transaction)
     if type:
-        q["type"] = type
-    if start or end:
-        q["date"] = {}
-        if start:
-            q["date"]["$gte"] = start
-        if end:
-            q["date"]["$lte"] = end
-    docs = await db.transactions.find(q).sort("date", 1).to_list(5000)
+        stmt = stmt.where(Transaction.type == type)
+    if start:
+        stmt = stmt.where(Transaction.date >= start)
+    if end:
+        stmt = stmt.where(Transaction.date <= end)
+    stmt = stmt.order_by(Transaction.date)
+    res = await db.execute(stmt)
+    docs = res.scalars().all()
 
     type_tr = {"income": "Gelir", "expense": "Gider"}
     pay_tr = {"cash": "Nakit", "bank": "Banka/Havale", "card": "Kredi Kartı", "check": "Çek/Senet"}
@@ -655,20 +806,12 @@ async def export_transactions(
     total_income = 0.0
     total_expense = 0.0
     for d in docs:
-        amt = d.get("amount", 0)
-        if d.get("type") == "income":
-            total_income += amt
+        if d.type == "income":
+            total_income += d.amount
         else:
-            total_expense += amt
-        ws.append([
-            d.get("date", ""),
-            type_tr.get(d.get("type"), d.get("type")),
-            d.get("category", ""),
-            pay_tr.get(d.get("payment_method"), d.get("payment_method", "")),
-            d.get("description", ""),
-            amt,
-            d.get("currency", "TRY"),
-        ])
+            total_expense += d.amount
+        ws.append([d.date, type_tr.get(d.type, d.type), d.category, pay_tr.get(d.payment_method, d.payment_method),
+                   d.description or "", d.amount, d.currency])
 
     ws.append([])
     ws.append(["", "", "", "", "Toplam Gelir", round(total_income, 2), ""])
@@ -692,124 +835,89 @@ async def export_transactions(
     )
 
 @api_router.get("/transactions")
-async def list_transactions(
-    type: Optional[str] = None,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    category: Optional[str] = None,
-    user: dict = Depends(get_current_user),
-):
-    q = {}
+async def list_transactions(type: Optional[str] = None, start: Optional[str] = None, end: Optional[str] = None,
+                            category: Optional[str] = None, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    stmt = select(Transaction)
     if type:
-        q["type"] = type
+        stmt = stmt.where(Transaction.type == type)
     if category:
-        q["category"] = category
-    if start or end:
-        q["date"] = {}
-        if start:
-            q["date"]["$gte"] = start
-        if end:
-            q["date"]["$lte"] = end
-    docs = await db.transactions.find(q).sort("date", -1).to_list(2000)
-    for d in docs:
-        d["id"] = str(d.pop("_id"))
-    return docs
+        stmt = stmt.where(Transaction.category == category)
+    if start:
+        stmt = stmt.where(Transaction.date >= start)
+    if end:
+        stmt = stmt.where(Transaction.date <= end)
+    stmt = stmt.order_by(Transaction.date.desc())
+    res = await db.execute(stmt)
+    return [transaction_dict(t) for t in res.scalars().all()]
 
 @api_router.post("/transactions")
-async def create_transaction(body: TransactionIn, user: dict = Depends(get_current_user)):
-    doc = body.model_dump()
-    doc["auto"] = False
-    doc["created_at"] = now_iso()
-    res = await db.transactions.insert_one(doc)
-    doc["id"] = str(res.inserted_id)
-    doc.pop("_id", None)
-    return doc
+async def create_transaction(body: TransactionIn, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    t = Transaction(id=new_id(), auto=False, created_at=now_iso(), **body.model_dump())
+    db.add(t)
+    await db.commit()
+    return transaction_dict(t)
 
 @api_router.put("/transactions/{tid}")
-async def update_transaction(tid: str, body: TransactionIn, user: dict = Depends(get_current_user)):
-    await db.transactions.update_one({"_id": ObjectId(tid)}, {"$set": body.model_dump()})
-    doc = await db.transactions.find_one({"_id": ObjectId(tid)})
-    if not doc:
+async def update_transaction(tid: str, body: TransactionIn, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    t = await db.get(Transaction, tid)
+    if not t:
         raise HTTPException(status_code=404, detail="Kayıt bulunamadı")
-    doc["id"] = str(doc.pop("_id"))
-    return doc
+    for k, v in body.model_dump().items():
+        setattr(t, k, v)
+    await db.commit()
+    return transaction_dict(t)
 
 @api_router.delete("/transactions/{tid}")
-async def delete_transaction(tid: str, user: dict = Depends(get_current_user)):
-    await db.transactions.delete_one({"_id": ObjectId(tid)})
+async def delete_transaction(tid: str, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    t = await db.get(Transaction, tid)
+    if t:
+        await db.delete(t)
+        await db.commit()
     return {"ok": True}
-
-# ---------------- Settings ----------------
-DEFAULT_SETTINGS = {
-    "company_name": "Rhisos Mobilya", "tagline": "", "address": "", "phone": "",
-    "email": "", "website": "", "tax_office": "", "tax_number": "", "logo": "",
-}
-
-@api_router.get("/settings")
-async def get_settings(user: dict = Depends(get_current_user)):
-    doc = await db.settings.find_one({"key": "company"})
-    if not doc:
-        return DEFAULT_SETTINGS
-    doc.pop("_id", None)
-    doc.pop("key", None)
-    return {**DEFAULT_SETTINGS, **doc}
-
-@api_router.put("/settings")
-async def update_settings(body: SettingsIn, user: dict = Depends(get_current_user)):
-    await db.settings.update_one({"key": "company"}, {"$set": {**body.model_dump(), "key": "company"}}, upsert=True)
-    return body.model_dump()
 
 # ---------------- Dashboard ----------------
 @api_router.get("/dashboard/stats")
-async def dashboard_stats(user: dict = Depends(get_current_user)):
-    txns = await db.transactions.find().to_list(5000)
-    total_income = sum(t["amount"] for t in txns if t["type"] == "income")
-    total_expense = sum(t["amount"] for t in txns if t["type"] == "expense")
+async def dashboard_stats(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    txns = (await db.execute(select(Transaction))).scalars().all()
+    total_income = sum(t.amount for t in txns if t.type == "income")
+    total_expense = sum(t.amount for t in txns if t.type == "expense")
 
-    # monthly aggregation last 6 months
     monthly = {}
     for t in txns:
-        month = (t.get("date") or "")[:7]
+        month = (t.date or "")[:7]
         if not month:
             continue
         monthly.setdefault(month, {"month": month, "income": 0, "expense": 0})
-        monthly[month][t["type"]] += t["amount"]
+        monthly[month][t.type] += t.amount
     monthly_list = sorted(monthly.values(), key=lambda x: x["month"])[-6:]
 
-    # expense by category
     cat = {}
     for t in txns:
-        if t["type"] == "expense":
-            cat[t["category"]] = cat.get(t["category"], 0) + t["amount"]
+        if t.type == "expense":
+            cat[t.category] = cat.get(t.category, 0) + t.amount
     expense_by_cat = [{"name": k, "value": round(v, 2)} for k, v in cat.items()]
 
-    quotes = await db.quotes.find().to_list(2000)
+    quotes = (await db.execute(select(Quote))).scalars().all()
     quote_counts = {"pending": 0, "approved": 0, "rejected": 0}
     expiring = []
     today = datetime.now(timezone.utc).date()
     soon = today + timedelta(days=7)
     for q in quotes:
-        st = q.get("status", "pending")
+        st = q.status or "pending"
         quote_counts[st] = quote_counts.get(st, 0) + 1
-        vu = q.get("valid_until")
+        vu = q.valid_until
         if st == "pending" and vu:
             try:
                 vu_date = date.fromisoformat(vu)
             except (ValueError, TypeError):
                 continue
             if vu_date <= soon:
-                expiring.append({
-                    "id": str(q["_id"]),
-                    "quote_number": q.get("quote_number"),
-                    "customer_name": q.get("customer_name"),
-                    "valid_until": vu,
-                    "days_left": (vu_date - today).days,
-                    "grand_total": q.get("grand_total", 0),
-                    "currency": q.get("currency", "TRY"),
-                })
+                expiring.append({"id": q.id, "quote_number": q.quote_number, "customer_name": q.customer_name,
+                                 "valid_until": vu, "days_left": (vu_date - today).days,
+                                 "grand_total": q.grand_total or 0, "currency": q.currency or "TRY"})
     expiring.sort(key=lambda x: x["days_left"])
 
-    customer_count = await db.customers.count_documents({})
+    customer_count = (await db.execute(select(func.count(Customer.id)))).scalar_one()
 
     return {
         "total_income": round(total_income, 2),
@@ -824,12 +932,32 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
     }
 
 @api_router.get("/dashboard/monthly-profit")
-async def monthly_profit(month: str, user: dict = Depends(get_current_user)):
-    # month format YYYY-MM
-    txns = await db.transactions.find({"date": {"$gte": f"{month}-01", "$lte": f"{month}-31"}}).to_list(5000)
-    income = round(sum(t["amount"] for t in txns if t["type"] == "income"), 2)
-    expense = round(sum(t["amount"] for t in txns if t["type"] == "expense"), 2)
+async def monthly_profit(month: str, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    stmt = select(Transaction).where(Transaction.date >= f"{month}-01", Transaction.date <= f"{month}-31")
+    txns = (await db.execute(stmt)).scalars().all()
+    income = round(sum(t.amount for t in txns if t.type == "income"), 2)
+    expense = round(sum(t.amount for t in txns if t.type == "expense"), 2)
     return {"month": month, "income": income, "expense": expense, "profit": round(income - expense, 2)}
+
+# ---------------- Settings ----------------
+@api_router.get("/settings")
+async def get_settings(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    s = await db.get(Settings, "company")
+    if not s:
+        return DEFAULT_SETTINGS
+    return settings_dict(s)
+
+@api_router.put("/settings")
+async def update_settings(body: SettingsIn, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    s = await db.get(Settings, "company")
+    data = body.model_dump()
+    if s:
+        for k, v in data.items():
+            setattr(s, k, v)
+    else:
+        db.add(Settings(key="company", **data))
+    await db.commit()
+    return data
 
 # ---------------- App wiring ----------------
 app.include_router(api_router)
@@ -847,21 +975,22 @@ logger = logging.getLogger(__name__)
 
 @app.on_event("startup")
 async def startup():
-    await db.users.create_index("email", unique=True)
-    await db.login_attempts.create_index("identifier")
-    # seed admin
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@example.com").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
-    existing = await db.users.find_one({"email": admin_email})
-    if existing is None:
-        await db.users.insert_one({
-            "email": admin_email, "password_hash": hash_password(admin_password),
-            "name": "Rhisos Admin", "role": "admin", "created_at": now_iso(),
-        })
-        logger.info("Admin seeded: %s", admin_email)
-    elif not verify_password(admin_password, existing["password_hash"]):
-        await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}})
+    async with AsyncSessionLocal() as db:
+        res = await db.execute(select(User).where(User.email == admin_email))
+        existing = res.scalar_one_or_none()
+        if existing is None:
+            db.add(User(id=new_id(), email=admin_email, password_hash=hash_password(admin_password),
+                        name="Rhisos Admin", role="admin", created_at=now_iso()))
+            await db.commit()
+            logger.info("Admin seeded: %s", admin_email)
+        elif not verify_password(admin_password, existing.password_hash):
+            existing.password_hash = hash_password(admin_password)
+            await db.commit()
 
 @app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
+async def shutdown():
+    await engine.dispose()

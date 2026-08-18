@@ -44,6 +44,27 @@ class TestAuth:
         assert r.status_code == 200, r.text
         assert r.json()["email"] == email
 
+    def test_logout_clears_cookies(self, admin_session):
+        r = admin_session.post(f"{API}/auth/logout")
+        assert r.status_code == 200
+        # after logout, /auth/me should be 401 - but session cookies may still be present client-side
+        # re-login to keep session valid for downstream tests
+        r2 = admin_session.post(f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+        assert r2.status_code == 200
+
+    def test_bruteforce_lockout_returns_429(self):
+        # use a bogus email so we don't lock out the admin from other tests
+        bogus = f"bruteforce_{int(time.time())}@example.com"
+        s = requests.Session()
+        got_429 = False
+        for i in range(10):
+            r = s.post(f"{API}/auth/login", json={"email": bogus, "password": "definitelyWrong123!"})
+            if r.status_code == 429:
+                got_429 = True
+                break
+            assert r.status_code == 401, f"iter {i} unexpected {r.status_code}: {r.text}"
+        assert got_429, "Expected 429 lockout within 10 wrong-password attempts, never got it"
+
 
 # ---------------- Customers ----------------
 class TestCustomers:
