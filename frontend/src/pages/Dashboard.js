@@ -3,6 +3,7 @@ import api, { fmtMoney } from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { TrendingUp, TrendingDown, Wallet, FileText, Users, ArrowUpRight, ArrowDownRight, AlertTriangle, Clock } from "lucide-react";
 import { Link } from "react-router-dom";
+import { Input } from "@/components/ui/input";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid,
 } from "recharts";
@@ -37,10 +38,17 @@ function StatCard({ label, value, icon: Icon, tone, testid, delay }) {
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
+  const nowMonth = new Date().toISOString().slice(0, 7);
+  const [profitMonth, setProfitMonth] = useState(nowMonth);
+  const [profit, setProfit] = useState(null);
 
   useEffect(() => {
     api.get("/dashboard/stats").then((res) => setStats(res.data));
   }, []);
+
+  useEffect(() => {
+    api.get(`/dashboard/monthly-profit?month=${profitMonth}`).then((res) => setProfit(res.data));
+  }, [profitMonth]);
 
   if (!stats) return <div className="p-8">Yükleniyor...</div>;
 
@@ -100,6 +108,38 @@ export default function Dashboard() {
         <StatCard testid="stat-balance" label="Net Bakiye" value={fmtMoney(stats.balance)} icon={Wallet} tone="primary" delay={120} />
         <StatCard testid="stat-quotes" label="Toplam Teklif" value={stats.total_quotes} icon={FileText} tone="warning" delay={180} />
       </div>
+
+      <Card className="p-6 rounded-xl border bg-card shadow-none mb-6" data-testid="monthly-profit-card">
+        <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+          <div>
+            <h3 className="font-display font-semibold text-lg">Aylık Kâr Raporu</h3>
+            <p className="text-sm text-muted-foreground">Seçili ay için gelir - gider - kâr özeti</p>
+          </div>
+          <Input
+            type="month"
+            data-testid="profit-month-input"
+            value={profitMonth}
+            onChange={(e) => setProfitMonth(e.target.value)}
+            className="w-44"
+          />
+        </div>
+        {profit && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="rounded-md border p-5 bg-positive/5">
+              <div className="flex items-center gap-2 text-positive mb-2"><TrendingUp className="h-4 w-4" /><span className="text-sm">Gelir</span></div>
+              <p className="font-mono text-2xl font-bold" data-testid="profit-income">{fmtMoney(profit.income)}</p>
+            </div>
+            <div className="rounded-md border p-5 bg-negative/5">
+              <div className="flex items-center gap-2 text-negative mb-2"><TrendingDown className="h-4 w-4" /><span className="text-sm">Gider</span></div>
+              <p className="font-mono text-2xl font-bold" data-testid="profit-expense">{fmtMoney(profit.expense)}</p>
+            </div>
+            <div className={`rounded-md border p-5 ${profit.profit >= 0 ? "bg-primary text-primary-foreground" : "bg-negative text-white"}`}>
+              <div className="flex items-center gap-2 mb-2 opacity-90"><Wallet className="h-4 w-4" /><span className="text-sm">Net Kâr</span></div>
+              <p className="font-mono text-2xl font-bold" data-testid="profit-net">{fmtMoney(profit.profit)}</p>
+            </div>
+          </div>
+        )}
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="lg:col-span-2 p-6 rounded-xl border bg-card shadow-none" data-testid="chart-monthly">

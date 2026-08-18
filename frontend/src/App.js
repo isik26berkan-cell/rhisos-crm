@@ -12,6 +12,7 @@ import Quotes from "@/pages/Quotes";
 import QuoteForm from "@/pages/QuoteForm";
 import QuoteView from "@/pages/QuoteView";
 import CashFlow from "@/pages/CashFlow";
+import CustomerHistory from "@/pages/CustomerHistory";
 import Settings from "@/pages/Settings";
 import { Loader2 } from "lucide-react";
 
@@ -57,6 +58,7 @@ function App() {
             >
               <Route index element={<Dashboard />} />
               <Route path="customers" element={<Customers />} />
+              <Route path="customers/:id" element={<CustomerHistory />} />
               <Route path="quotes" element={<Quotes />} />
               <Route path="quotes/new" element={<QuoteForm />} />
               <Route path="quotes/:id/edit" element={<QuoteForm />} />

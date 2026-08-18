@@ -19,6 +19,13 @@ from bson import ObjectId
 import bcrypt
 import jwt
 import secrets
+import uuid
+import re
+import ipaddress
+import httpx
+from html import escape
+from html.parser import HTMLParser
+from urllib.parse import urlparse
 
 # ---------------- DB ----------------
 mongo_url = os.environ['MONGO_URL']
@@ -139,6 +146,12 @@ class SettingsIn(BaseModel):
     tax_number: str = ""
     logo: str = ""  # base64 data URL
 
+class PaymentIn(BaseModel):
+    amount: float
+    date: str
+    method: str = "cash"
+    note: Optional[str] = ""
+
 # ---------------- Quote calc ----------------
 def compute_quote_totals(items, discount=0):
     subtotal = 0.0
@@ -156,6 +169,158 @@ def compute_quote_totals(items, discount=0):
         "discount": round(discount, 2),
         "grand_total": round(grand_total, 2),
     }
+
+# ---------------- Email (Emergent managed Resend) ----------------
+EMAIL_BASE_URL = "https://integrations.emergentagent.com"
+EMAIL_KEY = os.environ.get("EMERGENT_EMAIL_KEY", "")
+EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "Rhisos Mobilya")
+EMAIL_REPLY_TO = os.environ.get("EMAIL_REPLY_TO")
+
+_SHORTENERS = ("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "goo.gl", "rebrand.ly")
+_CRED_ASK = ("reply with your password", "reply with the code", "send your password", "cvv",
+             "send us your password", "enter your password below", "confirm your card number",
+             "your full card number", "seed phrase", "recovery phrase", "verify your card",
+             "social security number", "confirm your bank details")
+_HOSTISH = re.compile(r"\b(?:https?://)?((?:[a-z0-9-]+\.)+[a-z]{2,})", re.I)
+
+def _host_ok(host: str) -> bool:
+    if not host or "xn--" in host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        pass
+    return not any(host == s or host.endswith("." + s) for s in _SHORTENERS)
+
+def _same_site(shown: str, real: str) -> bool:
+    return shown == real or real.endswith("." + shown) or shown.endswith("." + real)
+
+class _EmailScan(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.tags, self.urls, self.anchors = set(), [], []
+        self._href, self._text = None, []
+    def handle_starttag(self, tag, attrs):
+        self.tags.add(tag.lower())
+        self.urls += [v for k, v in attrs if k.lower() in ("href", "src") and v]
+        if tag.lower() == "a":
+            self._href = dict((k.lower(), v) for k, v in attrs).get("href")
+            self._text = []
+    def handle_data(self, data):
+        if self._href is not None:
+            self._text.append(data)
+    def handle_endtag(self, tag):
+        if tag.lower() == "a" and self._href is not None:
+            self.anchors.append((self._href, "".join(self._text)))
+            self._href, self._text = None, []
+
+def _assert_safe_email(subject: str, html: str) -> None:
+    scan = _EmailScan(); scan.feed(html)
+    if scan.tags & {"form", "input", "textarea", "select"}:
+        raise ValueError("No forms or input fields in email (G2)")
+    body = f"{subject}\n{html}".lower()
+    for p in _CRED_ASK:
+        if p in body:
+            raise ValueError(f"Email asks the recipient for credentials: {p!r} (G2)")
+    for url in scan.urls:
+        low = url.strip().lower()
+        if low.startswith(("mailto:", "tel:", "cid:", "#")):
+            continue
+        if not low.startswith("https://"):
+            raise ValueError(f"Email links/assets must be absolute https: {url!r} (G3)")
+        host = urlparse(low).hostname or ""
+        if not _host_ok(host) or urlparse(low).username is not None:
+            raise ValueError(f"Shortened, numeric-host or credential-bearing URL: {url!r} (G3)")
+    for href, text in scan.anchors:
+        real = urlparse(href.strip().lower()).hostname or ""
+        if not real:
+            continue
+        for m in _HOSTISH.finditer(text):
+            if not _same_site(m.group(1).lower(), real):
+                raise ValueError(f"Anchor text {m.group(1)!r} != real link host {real!r} (G3)")
+
+async def send_email(*, to: str, subject: str, html: str, reply_to: str = None):
+    _assert_safe_email(subject, html)
+    payload = {"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME}
+    if reply_to or EMAIL_REPLY_TO:
+        payload["contact_email"] = reply_to or EMAIL_REPLY_TO
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{EMAIL_BASE_URL}/api/v1/email/send",
+                headers={"X-Email-Key": EMAIL_KEY},
+                json=payload,
+            )
+        resp.raise_for_status()
+        return resp.json().get("id")
+    except httpx.HTTPStatusError as e:
+        logging.getLogger(__name__).error(f"Email send failed: {e.response.status_code} {e.response.text}")
+        raise HTTPException(status_code=502, detail="E-posta gönderilemedi")
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Email send error: {str(e)}")
+        raise HTTPException(status_code=500, detail="E-posta gönderilemedi")
+
+def _fmt_try(amount, currency="TRY"):
+    sym = {"TRY": "₺", "USD": "$", "EUR": "€"}.get(currency, "")
+    return f"{sym}{float(amount or 0):,.2f}"
+
+def build_quote_email_html(doc: dict, settings_doc: dict) -> str:
+    company = escape(settings_doc.get("company_name") or EMAIL_FROM_NAME)
+    cur = doc.get("currency", "TRY")
+    rows = ""
+    for it in doc.get("items", []):
+        line = it.get("quantity", 0) * it.get("unit_price", 0)
+        rows += (
+            f'<tr>'
+            f'<td style="padding:8px 6px;border-bottom:1px solid #eee">{escape(str(it.get("description","")))}</td>'
+            f'<td style="padding:8px 6px;border-bottom:1px solid #eee;text-align:right">{escape(str(it.get("quantity",0)))}</td>'
+            f'<td style="padding:8px 6px;border-bottom:1px solid #eee;text-align:right">{escape(_fmt_try(it.get("unit_price",0),cur))}</td>'
+            f'<td style="padding:8px 6px;border-bottom:1px solid #eee;text-align:right">%{escape(str(it.get("vat_rate",0)))}</td>'
+            f'<td style="padding:8px 6px;border-bottom:1px solid #eee;text-align:right">{escape(_fmt_try(line,cur))}</td>'
+            f'</tr>'
+        )
+    paid = doc.get("paid_total", 0)
+    remaining = doc.get("grand_total", 0) - paid
+    contact_bits = []
+    if settings_doc.get("phone"):
+        contact_bits.append(f"Tel: {escape(settings_doc['phone'])}")
+    if settings_doc.get("email"):
+        contact_bits.append(escape(settings_doc["email"]))
+    if settings_doc.get("address"):
+        contact_bits.append(escape(settings_doc["address"]))
+    contact = " &nbsp;•&nbsp; ".join(contact_bits)
+    return (
+        f'<table role="presentation" width="100%" style="background:#FDFBF7;padding:24px 0"><tr><td align="center">'
+        f'<table role="presentation" width="600" style="background:#ffffff;border:1px solid #E8E5E1;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#1F1A17">'
+        f'<tr><td style="background:#4A3B32;color:#ffffff;padding:20px 28px">'
+        f'<div style="font-size:22px;font-weight:bold">{company}</div>'
+        f'<div style="font-size:13px;color:#e9e2da">Teklif Belgesi</div></td></tr>'
+        f'<tr><td style="padding:24px 28px">'
+        f'<p style="margin:0 0 4px">Sayın <strong>{escape(str(doc.get("customer_name","")))}</strong>,</p>'
+        f'<p style="margin:0 0 16px;color:#6B615A">Aşağıda <strong>{escape(str(doc.get("quote_number","")))}</strong> numaralı teklifimizin detaylarını bulabilirsiniz.</p>'
+        f'<table role="presentation" width="100%" style="border-collapse:collapse;font-size:14px">'
+        f'<tr style="color:#6B615A;text-align:left">'
+        f'<th style="padding:8px 6px;border-bottom:2px solid #4A3B32">Açıklama</th>'
+        f'<th style="padding:8px 6px;border-bottom:2px solid #4A3B32;text-align:right">Adet</th>'
+        f'<th style="padding:8px 6px;border-bottom:2px solid #4A3B32;text-align:right">Birim</th>'
+        f'<th style="padding:8px 6px;border-bottom:2px solid #4A3B32;text-align:right">KDV</th>'
+        f'<th style="padding:8px 6px;border-bottom:2px solid #4A3B32;text-align:right">Tutar</th></tr>'
+        f'{rows}</table>'
+        f'<table role="presentation" width="100%" style="margin-top:16px;font-size:14px">'
+        f'<tr><td style="text-align:right;color:#6B615A;padding:2px 6px">Ara Toplam</td><td style="text-align:right;padding:2px 6px;width:140px">{escape(_fmt_try(doc.get("subtotal",0),cur))}</td></tr>'
+        f'<tr><td style="text-align:right;color:#6B615A;padding:2px 6px">İskonto</td><td style="text-align:right;padding:2px 6px">-{escape(_fmt_try(doc.get("discount",0),cur))}</td></tr>'
+        f'<tr><td style="text-align:right;color:#6B615A;padding:2px 6px">KDV</td><td style="text-align:right;padding:2px 6px">{escape(_fmt_try(doc.get("vat_total",0),cur))}</td></tr>'
+        f'<tr><td style="text-align:right;font-weight:bold;font-size:16px;padding:6px 6px;border-top:1px solid #E8E5E1">Genel Toplam</td><td style="text-align:right;font-weight:bold;font-size:16px;padding:6px 6px;border-top:1px solid #E8E5E1">{escape(_fmt_try(doc.get("grand_total",0),cur))}</td></tr>'
+        f'<tr><td style="text-align:right;color:#3A5A40;padding:2px 6px">Ödenen</td><td style="text-align:right;color:#3A5A40;padding:2px 6px">{escape(_fmt_try(paid,cur))}</td></tr>'
+        f'<tr><td style="text-align:right;color:#9C3D38;padding:2px 6px">Kalan Bakiye</td><td style="text-align:right;color:#9C3D38;padding:2px 6px">{escape(_fmt_try(remaining,cur))}</td></tr>'
+        f'</table>'
+        + (f'<p style="margin:16px 0 0;color:#6B615A;font-size:13px">{escape(str(doc.get("notes","")))}</p>' if doc.get("notes") else "")
+        + f'</td></tr>'
+        f'<tr><td style="padding:16px 28px;background:#FDFBF7;color:#6B615A;font-size:12px;border-top:1px solid #E8E5E1">'
+        f'{contact}<br/>Bu e-posta {company} tarafından gönderilmiştir. Şifre veya kart bilgisi asla e-posta ile istenmez.</td></tr>'
+        f'</table></td></tr></table>'
+    )
 
 # ---------------- Auth Routes ----------------
 @api_router.post("/auth/register")
@@ -251,6 +416,37 @@ async def delete_customer(cid: str, user: dict = Depends(get_current_user)):
     await db.customers.delete_one({"_id": ObjectId(cid)})
     return {"ok": True}
 
+@api_router.get("/customers/{cid}/history")
+async def customer_history(cid: str, user: dict = Depends(get_current_user)):
+    customer = await db.customers.find_one({"_id": ObjectId(cid)})
+    if not customer:
+        raise HTTPException(status_code=404, detail="Müşteri bulunamadı")
+    customer["id"] = str(customer.pop("_id"))
+    quotes = await db.quotes.find({"customer_id": cid}).sort("created_at", -1).to_list(1000)
+    quote_ids = []
+    for q in quotes:
+        q["id"] = str(q.pop("_id"))
+        quote_ids.append(q["id"])
+    payments = []
+    for q in quotes:
+        for p in q.get("payments", []):
+            payments.append({**p, "quote_id": q["id"], "quote_number": q.get("quote_number"), "currency": q.get("currency", "TRY")})
+    payments.sort(key=lambda x: x.get("date", ""), reverse=True)
+    total_quoted = round(sum(q.get("grand_total", 0) for q in quotes), 2)
+    total_approved = round(sum(q.get("grand_total", 0) for q in quotes if q.get("status") == "approved"), 2)
+    total_paid = round(sum(p["amount"] for p in payments), 2)
+    return {
+        "customer": customer,
+        "quotes": quotes,
+        "payments": payments,
+        "totals": {
+            "total_quoted": total_quoted,
+            "total_approved": total_approved,
+            "total_paid": total_paid,
+            "quote_count": len(quotes),
+        },
+    }
+
 # ---------------- Quote Routes ----------------
 async def next_quote_number():
     count = await db.quotes.count_documents({})
@@ -285,6 +481,8 @@ async def create_quote(body: QuoteIn, user: dict = Depends(get_current_user)):
         "notes": body.notes,
         "valid_until": body.valid_until,
         "status": "pending",
+        "payments": [],
+        "paid_total": 0,
         **totals,
         "created_at": now_iso(),
         "created_by": user["name"],
@@ -321,28 +519,72 @@ async def update_quote_status(qid: str, body: QuoteStatusIn, user: dict = Depend
     if not doc:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı")
     await db.quotes.update_one({"_id": ObjectId(qid)}, {"$set": {"status": body.status}})
-    # Auto-create income when approved
-    if body.status == "approved":
-        existing = await db.transactions.find_one({"quote_id": qid, "auto": True})
-        if not existing:
-            await db.transactions.insert_one({
-                "type": "income",
-                "amount": doc["grand_total"],
-                "category": "Teklif Geliri",
-                "payment_method": "bank",
-                "description": f"Onaylanan teklif {doc['quote_number']} - {doc['customer_name']}",
-                "date": now_iso()[:10],
-                "currency": doc.get("currency", "TRY"),
-                "quote_id": qid,
-                "auto": True,
-                "created_at": now_iso(),
-            })
-    else:
-        # remove auto income if status reverted from approved
-        await db.transactions.delete_one({"quote_id": qid, "auto": True})
     updated = await db.quotes.find_one({"_id": ObjectId(qid)})
     updated["id"] = str(updated.pop("_id"))
     return updated
+
+@api_router.post("/quotes/{qid}/payments")
+async def add_quote_payment(qid: str, body: PaymentIn, user: dict = Depends(get_current_user)):
+    doc = await db.quotes.find_one({"_id": ObjectId(qid)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı")
+    if body.amount <= 0:
+        raise HTTPException(status_code=400, detail="Geçerli bir tutar girin")
+    pid = str(uuid.uuid4())
+    payment = {"id": pid, "amount": round(body.amount, 2), "date": body.date, "method": body.method, "note": body.note or ""}
+    payments = doc.get("payments", []) + [payment]
+    paid_total = round(sum(p["amount"] for p in payments), 2)
+    await db.quotes.update_one({"_id": ObjectId(qid)}, {"$set": {"payments": payments, "paid_total": paid_total}})
+    # linked income transaction so cash flow reflects real money in
+    await db.transactions.insert_one({
+        "type": "income",
+        "amount": payment["amount"],
+        "category": "Kapora / Teklif Ödemesi",
+        "payment_method": body.method,
+        "description": f"{doc['quote_number']} - {doc['customer_name']} ödemesi",
+        "date": body.date,
+        "currency": doc.get("currency", "TRY"),
+        "quote_id": qid,
+        "payment_id": pid,
+        "auto": True,
+        "created_at": now_iso(),
+    })
+    updated = await db.quotes.find_one({"_id": ObjectId(qid)})
+    updated["id"] = str(updated.pop("_id"))
+    return updated
+
+@api_router.delete("/quotes/{qid}/payments/{pid}")
+async def delete_quote_payment(qid: str, pid: str, user: dict = Depends(get_current_user)):
+    doc = await db.quotes.find_one({"_id": ObjectId(qid)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı")
+    payments = [p for p in doc.get("payments", []) if p.get("id") != pid]
+    paid_total = round(sum(p["amount"] for p in payments), 2)
+    await db.quotes.update_one({"_id": ObjectId(qid)}, {"$set": {"payments": payments, "paid_total": paid_total}})
+    await db.transactions.delete_one({"payment_id": pid})
+    updated = await db.quotes.find_one({"_id": ObjectId(qid)})
+    updated["id"] = str(updated.pop("_id"))
+    return updated
+
+@api_router.post("/quotes/{qid}/email")
+async def email_quote(qid: str, user: dict = Depends(get_current_user)):
+    doc = await db.quotes.find_one({"_id": ObjectId(qid)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı")
+    customer = None
+    try:
+        customer = await db.customers.find_one({"_id": ObjectId(doc["customer_id"])})
+    except Exception:
+        customer = None
+    to_email = (customer or {}).get("email", "").strip()
+    if not to_email:
+        raise HTTPException(status_code=400, detail="Müşterinin kayıtlı e-posta adresi yok. Önce müşteriye e-posta ekleyin.")
+    settings_doc = await db.settings.find_one({"key": "company"}) or {}
+    subject = f"{EMAIL_FROM_NAME} - Teklif {doc['quote_number']}"
+    html = build_quote_email_html(doc, settings_doc)
+    email_id = await send_email(to=to_email, subject=subject, html=html)
+    await db.quotes.update_one({"_id": ObjectId(qid)}, {"$set": {"emailed_at": now_iso(), "emailed_to": to_email}})
+    return {"ok": True, "email_id": email_id, "to": to_email}
 
 @api_router.delete("/quotes/{qid}")
 async def delete_quote(qid: str, user: dict = Depends(get_current_user)):
@@ -556,6 +798,14 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
         "customer_count": customer_count,
         "expiring_quotes": expiring,
     }
+
+@api_router.get("/dashboard/monthly-profit")
+async def monthly_profit(month: str, user: dict = Depends(get_current_user)):
+    # month format YYYY-MM
+    txns = await db.transactions.find({"date": {"$gte": f"{month}-01", "$lte": f"{month}-31"}}).to_list(5000)
+    income = round(sum(t["amount"] for t in txns if t["type"] == "income"), 2)
+    expense = round(sum(t["amount"] for t in txns if t["type"] == "expense"), 2)
+    return {"month": month, "income": income, "expense": expense, "profit": round(income - expense, 2)}
 
 # ---------------- App wiring ----------------
 app.include_router(api_router)

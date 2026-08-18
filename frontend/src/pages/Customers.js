@@ -7,12 +7,14 @@ import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Plus, Pencil, Trash2, Building2, Phone, Mail, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, Building2, Phone, Mail, Search, History } from "lucide-react";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 
 const empty = { name: "", company: "", email: "", phone: "", address: "", notes: "" };
 
 export default function Customers() {
+  const navigate = useNavigate();
   const [customers, setCustomers] = useState([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(empty);
@@ -82,6 +84,7 @@ export default function Customers() {
                   {c.company && <p className="text-sm text-muted-foreground flex items-center gap-1.5 mt-1"><Building2 className="h-3.5 w-3.5" />{c.company}</p>}
                 </div>
                 <div className="flex gap-1">
+                  <Button data-testid={`history-customer-${c.id}`} variant="ghost" size="icon" onClick={() => navigate(`/customers/${c.id}`)}><History className="h-4 w-4" /></Button>
                   <Button data-testid={`edit-customer-${c.id}`} variant="ghost" size="icon" onClick={() => openEdit(c)}><Pencil className="h-4 w-4" /></Button>
                   <Button data-testid={`delete-customer-${c.id}`} variant="ghost" size="icon" onClick={() => setDeleteId(c.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                 </div>
