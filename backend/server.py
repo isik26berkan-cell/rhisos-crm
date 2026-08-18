@@ -411,6 +411,14 @@ async def update_customer(cid: str, body: CustomerIn, user: dict = Depends(get_c
     doc["id"] = str(doc.pop("_id"))
     return doc
 
+@api_router.get("/customers/{cid}")
+async def get_customer(cid: str, user: dict = Depends(get_current_user)):
+    doc = await db.customers.find_one({"_id": ObjectId(cid)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Müşteri bulunamadı")
+    doc["id"] = str(doc.pop("_id"))
+    return doc
+
 @api_router.delete("/customers/{cid}")
 async def delete_customer(cid: str, user: dict = Depends(get_current_user)):
     await db.customers.delete_one({"_id": ObjectId(cid)})
@@ -591,6 +599,22 @@ async def delete_quote(qid: str, user: dict = Depends(get_current_user)):
     await db.quotes.delete_one({"_id": ObjectId(qid)})
     await db.transactions.delete_many({"quote_id": qid, "auto": True})
     return {"ok": True}
+
+# ---------------- Public (no auth) ----------------
+@api_router.get("/public/quotes/{qid}")
+async def public_quote(qid: str):
+    try:
+        doc = await db.quotes.find_one({"_id": ObjectId(qid)})
+    except Exception:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı")
+    if not doc:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı")
+    doc["id"] = str(doc.pop("_id"))
+    settings_doc = await db.settings.find_one({"key": "company"}) or {}
+    settings_doc.pop("_id", None)
+    settings_doc.pop("key", None)
+    company = {**DEFAULT_SETTINGS, **settings_doc}
+    return {"quote": doc, "company": company}
 
 # ---------------- Transaction Routes ----------------
 @api_router.get("/transactions/export")

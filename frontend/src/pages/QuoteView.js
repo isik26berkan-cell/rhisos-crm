@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Printer, Pencil, Mail, Plus, Trash2, Loader2 } from "lucide-react";
+import { ArrowLeft, Printer, Pencil, Mail, Plus, Trash2, Loader2, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 
 const STATUS = {
@@ -25,6 +25,7 @@ export default function QuoteView() {
   const navigate = useNavigate();
   const [quote, setQuote] = useState(null);
   const [company, setCompany] = useState(null);
+  const [customer, setCustomer] = useState(null);
   const [payOpen, setPayOpen] = useState(false);
   const [payForm, setPayForm] = useState({ amount: "", date: today(), method: "bank", note: "" });
   const [emailing, setEmailing] = useState(false);
@@ -34,6 +35,22 @@ export default function QuoteView() {
     load();
     api.get("/settings").then(({ data }) => setCompany(data));
   }, [id]);
+
+  useEffect(() => {
+    if (quote?.customer_id) {
+      api.get(`/customers/${quote.customer_id}`).then(({ data }) => setCustomer(data)).catch(() => {});
+    }
+  }, [quote?.customer_id]);
+
+  const shareWhatsApp = () => {
+    let phone = (customer?.phone || "").replace(/\D/g, "");
+    if (!phone) { toast.error("Müşterinin telefon numarası kayıtlı değil"); return; }
+    if (phone.startsWith("0")) phone = "90" + phone.slice(1);
+    else if (phone.length === 10) phone = "90" + phone;
+    const link = `${window.location.origin}/q/${id}`;
+    const msg = `Merhaba ${quote.customer_name}, ${quote.quote_number} numaralı teklifiniz hazır. Detaylar için: ${link}`;
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
+  };
 
   const changeStatus = async (status) => {
     await api.patch(`/quotes/${id}/status`, { status });
@@ -93,6 +110,9 @@ export default function QuoteView() {
           </Select>
           <Button data-testid="email-quote-button" variant="outline" onClick={sendEmail} disabled={emailing}>
             {emailing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Mail className="h-4 w-4 mr-2" />} E-posta Gönder
+          </Button>
+          <Button data-testid="whatsapp-quote-button" variant="outline" onClick={shareWhatsApp} disabled={!customer} className="text-positive border-positive/40 hover:bg-positive/10">
+            <MessageCircle className="h-4 w-4 mr-2" /> WhatsApp
           </Button>
           <Button variant="outline" onClick={() => navigate(`/quotes/${id}/edit`)}><Pencil className="h-4 w-4 mr-2" /> Düzenle</Button>
           <Button data-testid="print-quote-button" onClick={() => window.print()} className="rounded-full"><Printer className="h-4 w-4 mr-2" /> Yazdır / PDF</Button>

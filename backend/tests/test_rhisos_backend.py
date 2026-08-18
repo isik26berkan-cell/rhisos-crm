@@ -534,3 +534,70 @@ class TestEmailQuote:
         admin_session.delete(f"{API}/customers/{TestEmailQuote.customer_with_email}")
         admin_session.delete(f"{API}/customers/{TestEmailQuote.customer_no_email}")
 
+
+# ---------------- Public Quote (NEW iter4) + Single Customer endpoint ----------------
+class TestPublicQuoteAndSingleCustomer:
+    customer_id = None
+    quote_id = None
+
+    def test_setup(self, admin_session):
+        r = admin_session.post(f"{API}/customers", json={
+            "name": "TEST_PubCust", "phone": "05551234567", "email": "pub@test.com"
+        })
+        assert r.status_code == 200
+        TestPublicQuoteAndSingleCustomer.customer_id = r.json()["id"]
+        r = admin_session.post(f"{API}/quotes", json={
+            "customer_id": TestPublicQuoteAndSingleCustomer.customer_id,
+            "customer_name": "TEST_PubCust",
+            "title": "TEST Public Teklif",
+            "items": [{"description": "Koltuk", "quantity": 1, "unit_price": 2000, "vat_rate": 20}],
+            "currency": "TRY", "discount": 0,
+        })
+        assert r.status_code == 200
+        TestPublicQuoteAndSingleCustomer.quote_id = r.json()["id"]
+
+    def test_get_single_customer_authed(self, admin_session):
+        r = admin_session.get(f"{API}/customers/{TestPublicQuoteAndSingleCustomer.customer_id}")
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["id"] == TestPublicQuoteAndSingleCustomer.customer_id
+        assert d["phone"] == "05551234567"
+        assert d["name"] == "TEST_PubCust"
+
+    def test_single_customer_unauth(self):
+        r = requests.get(f"{API}/customers/{TestPublicQuoteAndSingleCustomer.customer_id}")
+        assert r.status_code == 401
+
+    def test_single_customer_does_not_clash_with_history(self, admin_session):
+        # ensure /customers/{cid} and /customers/{cid}/history are both reachable
+        r1 = admin_session.get(f"{API}/customers/{TestPublicQuoteAndSingleCustomer.customer_id}")
+        r2 = admin_session.get(f"{API}/customers/{TestPublicQuoteAndSingleCustomer.customer_id}/history")
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+        assert "quotes" in r2.json() and "id" not in r2.json()  # history returns {customer, quotes,...}
+
+    def test_public_quote_no_auth(self):
+        # brand new session, no cookies
+        r = requests.get(f"{API}/public/quotes/{TestPublicQuoteAndSingleCustomer.quote_id}")
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert "quote" in d and "company" in d
+        assert d["quote"]["id"] == TestPublicQuoteAndSingleCustomer.quote_id
+        assert d["quote"]["grand_total"] == 2400.0
+        assert d["quote"]["customer_name"] == "TEST_PubCust"
+        assert isinstance(d["company"], dict)
+        # ensure raw _id not leaked
+        assert "_id" not in d["quote"]
+
+    def test_public_quote_404_bad_objectid(self):
+        r = requests.get(f"{API}/public/quotes/not-a-valid-id")
+        assert r.status_code == 404
+
+    def test_public_quote_404_nonexistent(self):
+        r = requests.get(f"{API}/public/quotes/507f1f77bcf86cd799439099")
+        assert r.status_code == 404
+
+    def test_cleanup(self, admin_session):
+        admin_session.delete(f"{API}/quotes/{TestPublicQuoteAndSingleCustomer.quote_id}")
+        admin_session.delete(f"{API}/customers/{TestPublicQuoteAndSingleCustomer.customer_id}")
+

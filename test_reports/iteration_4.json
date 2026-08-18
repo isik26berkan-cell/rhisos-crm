@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 4 validated the new 'WhatsApp ile Gönder' feature end-to-end: (1) new public no-auth endpoint GET /api/public/quotes/{qid}, (2) new auth endpoint GET /api/customers/{cid}, (3) new public page /q/:id (PublicQuote), (4) whatsapp-quote-button on QuoteView. Backend: 57/57 pytest passed (49 existing + 8 new in TestPublicQuoteAndSingleCustomer covering: single-customer authed 200 with phone, single-customer 401 unauth, no clash between /customers/{cid} and /customers/{cid}/history, public quote 200 no-cookie with quote+company, no _id leaked, 404 on invalid ObjectId and 404 on non-existent id). Frontend E2E: WhatsApp button PRESENT on QuoteView and produces valid wa.me link → https://api.whatsapp.com/send/?phone=905551234567&text=... containing the phone normalized to 90-prefix AND the /q/<qid> public link; missing-phone shows exact toast 'Müşterinin telefon numarası kayıtlı değil'; /q/<validId> in a fresh browser context (3 cookies were session-only, no auth cookies) rendered [data-testid=public-quote] with customer name, item, and grand total without redirect to /login; /q/<badId> shows [data-testid=public-quote-error] 'Teklif bulunamadı'; public-print-button present. Regression: dashboard/stats + monthly-profit + settings all still functional. All test data cleaned; DB verified empty (0 customers/quotes/txns), settings reset to defaults.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_rhisos_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 868 lines (>700 guideline); consider splitting into routers/quotes.py, routers/customers.py, routers/public.py, routers/email.py.",
+    "GET /api/public/quotes/{qid} correctly wraps ObjectId(qid) in try/except and returns 404 on malformed id; company doc pops _id + key before merge - clean. No sensitive fields (no cost prices etc.) exposed in the quote schema, so public exposure is acceptable.",
+    "Route order OK: /customers/{cid}/history and /customers/{cid} coexist because paths differ in segment count - FastAPI matches correctly. Verified by test_single_customer_does_not_clash_with_history.",
+    "shareWhatsApp in QuoteView.js: relies on customer state loaded async; if user clicks before /customers/{cid} resolves, the falsy-phone branch fires (toast). This is safe (no crash) but a minor UX nit - could disable button until customer is loaded, or fetch phone inline.",
+    "PublicQuote uses same axios instance with withCredentials:true - fine for no-auth endpoint but sends any existing auth cookies (harmless since endpoint has no dependency, still worth noting).",
+    "Prior open items still apply: no month-end boundary computed in monthly-profit filter; next_quote_number races via count_documents; add_quote_payment inserts income txn without transaction/rollback; compute_quote_totals VAT applied on pre-discount subtotal (business decision)."
+  ],
+  "updated_files": ["/app/backend/tests/test_rhisos_backend.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin: iskberkan@gmail.com / rhisos2026",
+  "seed_data_creation": "Created 2 customers (E2E_WAcust w/phone, E2E_NoPhone) + 2 quotes during frontend E2E; leftover TEST_Updated customer + TEST_Kira txn from historic pytest runs also cleaned. Final state verified: 0 customers, 0 quotes, 0 transactions; /api/settings reset to defaults.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression: /app/backend/tests/test_rhisos_backend.py now has 57 tests (~7s parallel). New class TestPublicQuoteAndSingleCustomer covers /api/public/quotes/{qid} and /api/customers/{cid}. Frontend selectors of interest for WhatsApp feature: whatsapp-quote-button, public-quote, public-quote-error, public-print-button. To exercise the WhatsApp popup in Playwright, use page.expect_popup() and wait ~2.5s AFTER navigating to /quotes/:id so the async /customers/{customer_id} fetch completes before clicking (otherwise phone is empty and toast error fires).",
+  "rca of the issue": "N/A - all new features implemented correctly per spec and pass all assertions."
+}

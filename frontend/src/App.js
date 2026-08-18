@@ -13,6 +13,7 @@ import QuoteForm from "@/pages/QuoteForm";
 import QuoteView from "@/pages/QuoteView";
 import CashFlow from "@/pages/CashFlow";
 import CustomerHistory from "@/pages/CustomerHistory";
+import PublicQuote from "@/pages/PublicQuote";
 import Settings from "@/pages/Settings";
 import { Loader2 } from "lucide-react";
 
@@ -46,6 +47,7 @@ function App() {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
+            <Route path="/q/:id" element={<PublicQuote />} />
             <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
             <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
             <Route
