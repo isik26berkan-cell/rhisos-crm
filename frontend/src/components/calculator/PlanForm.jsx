@@ -8,7 +8,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Collapsible,
@@ -17,13 +16,8 @@ import {
 } from "@/components/ui/collapsible";
 import { fmtPct } from "@/lib/format";
 import { TieredPayments } from "./TieredPayments";
-import { ChevronDown, Settings2 } from "lucide-react";
+import { ChevronDown, Settings2, Info } from "lucide-react";
 import { useState } from "react";
-
-const MONTHS = [
-  "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
-  "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
-];
 
 const TERMS = [12, 18, 24, 30, 36, 48, 60, 72];
 
@@ -35,10 +29,6 @@ const FieldLabel = ({ children }) => (
 
 export function PlanForm({ plan, update, summary }) {
   const [advanced, setAdvanced] = useState(false);
-  const years = [];
-  const nowY = new Date().getFullYear();
-  for (let y = nowY; y <= nowY + 8; y++) years.push(y);
-
   const pesinatError = plan.downPayment > plan.financingAmount;
 
   return (
@@ -50,24 +40,6 @@ export function PlanForm({ plan, update, summary }) {
         <p className="text-sm text-zinc-500 mt-0.5">
           Bilgileri değiştirdikçe plan anında güncellenir.
         </p>
-      </div>
-
-      {/* Hesaplama Modu */}
-      <div className="space-y-2">
-        <FieldLabel>Hesaplama Modu</FieldLabel>
-        <Tabs value={plan.calcMode} onValueChange={(v) => update({ calcMode: v })}>
-          <TabsList className="grid grid-cols-3 w-full bg-zinc-100 rounded-xl h-auto p-1">
-            <TabsTrigger value="delivery" data-testid="mode-delivery" className="rounded-lg text-xs py-2 data-[state=active]:bg-white">
-              Teslim Tarihine Göre
-            </TabsTrigger>
-            <TabsTrigger value="budget" data-testid="mode-budget" className="rounded-lg text-xs py-2 data-[state=active]:bg-white">
-              Aylık Bütçeme Göre
-            </TabsTrigger>
-            <TabsTrigger value="scenario" data-testid="mode-scenario" className="rounded-lg text-xs py-2 data-[state=active]:bg-white">
-              Peşinat + Teslim
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
       </div>
 
       {/* Finansman Tutarı */}
@@ -102,17 +74,20 @@ export function PlanForm({ plan, update, summary }) {
         )}
       </div>
 
-      {/* Aylık Bütçe (budget mode) */}
-      {plan.calcMode === "budget" && (
-        <div className="space-y-2">
-          <FieldLabel>Aylık Ödeyebileceğim Tutar</FieldLabel>
-          <CurrencyInput
-            data-testid="input-budget"
-            value={plan.monthlyBudget}
-            onChange={(v) => update({ monthlyBudget: v })}
-          />
-        </div>
-      )}
+      {/* Aylık Ödeme (teslim öncesi tasarruf taksiti) */}
+      <div className="space-y-2">
+        <FieldLabel>Aylık Ödeme (Teslim Öncesi)</FieldLabel>
+        <CurrencyInput
+          data-testid="input-monthly-payment"
+          value={plan.monthlyPayment}
+          onChange={(v) => update({ monthlyPayment: v })}
+        />
+        <p className="text-xs text-zinc-400 flex items-start gap-1.5">
+          <Info size={13} className="mt-0.5 shrink-0" />
+          Teslim en erken {summary.minDeliveryMonths}. ayda olur ve ancak finansmanın
+          %{summary.deliveryTargetRate}'i ödendiğinde gerçekleşir.
+        </p>
+      </div>
 
       {/* Başlangıç Tarihi */}
       <div className="space-y-2">
@@ -125,41 +100,6 @@ export function PlanForm({ plan, update, summary }) {
           className="bg-zinc-50 border-zinc-200 rounded-xl h-11 focus-visible:ring-zinc-900"
         />
       </div>
-
-      {/* Teslim Ayı (yalnızca bütçe modunda gizli) */}
-      {plan.calcMode !== "budget" && (
-        <div className="space-y-2">
-          <FieldLabel>İstenen Teslim Tarihi</FieldLabel>
-          <div className="grid grid-cols-2 gap-3">
-            <Select
-              value={String(plan.deliveryMonth)}
-              onValueChange={(v) => update({ deliveryMonth: parseInt(v) })}
-            >
-              <SelectTrigger data-testid="select-delivery-month" className="bg-zinc-50 border-zinc-200 rounded-xl h-11">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {MONTHS.map((m, i) => (
-                  <SelectItem key={i} value={String(i)}>{m}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select
-              value={String(plan.deliveryYear)}
-              onValueChange={(v) => update({ deliveryYear: parseInt(v) })}
-            >
-              <SelectTrigger data-testid="select-delivery-year" className="bg-zinc-50 border-zinc-200 rounded-xl h-11">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {years.map((y) => (
-                  <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-      )}
 
       {/* Toplam Vade */}
       <div className="space-y-2">
@@ -225,30 +165,6 @@ export function PlanForm({ plan, update, summary }) {
                 ))}
               </SelectContent>
             </Select>
-          </div>
-
-          {/* Teslim Öncesi Ödeme */}
-          <div className="space-y-2">
-            <FieldLabel>Teslim Öncesi Ödeme</FieldLabel>
-            <RadioGroup
-              value={plan.preMode}
-              onValueChange={(v) => update({ preMode: v })}
-              className="flex gap-4"
-            >
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <RadioGroupItem value="auto" data-testid="pre-mode-auto" /> Otomatik
-              </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <RadioGroupItem value="manual" data-testid="pre-mode-manual" /> Manuel
-              </label>
-            </RadioGroup>
-            {plan.preMode === "manual" && (
-              <CurrencyInput
-                data-testid="input-pre-monthly"
-                value={plan.preMonthly}
-                onChange={(v) => update({ preMonthly: v })}
-              />
-            )}
           </div>
 
           {/* Teslim Sonrası Ödeme */}

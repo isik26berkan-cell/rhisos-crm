@@ -6,17 +6,12 @@ const KEY_MAP = {
   financingAmount: "f",
   downPayment: "d",
   startDate: "s",
-  deliveryMonth: "dm",
-  deliveryYear: "dy",
   paymentDay: "pd",
   termMonths: "t",
   customTerm: "ct",
-  calcMode: "cm",
-  preMode: "pm",
-  preMonthly: "pmv",
+  monthlyPayment: "mp",
   postMode: "om",
   postMonthly: "omv",
-  monthlyBudget: "mb",
   tiers: "ti",
   edits: "e",
   additional: "a",
@@ -49,6 +44,9 @@ function expand(obj) {
     additional: {},
     customTerm: false,
     name: "",
+    monthlyPayment: 0,
+    postMode: "auto",
+    postMonthly: 0,
   };
   for (const [short, val] of Object.entries(obj)) {
     const key = REV_MAP[short];

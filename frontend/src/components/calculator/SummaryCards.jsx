@@ -81,9 +81,15 @@ export function SummaryCards({ summary }) {
           testid="summary-pesinat-orani"
         />
         <Card
-          label="Teslim Tarihi"
-          value={fmtMonthYear(summary.deliveryDate)}
+          label="Teslim Tarihi (Oto.)"
+          value={summary.deliveryDate ? fmtMonthYear(summary.deliveryDate) : "Ulaşılamıyor"}
+          sub={
+            summary.preDeliveryMonths
+              ? `${summary.preDeliveryMonths}. ay · en erken ${summary.minDeliveryMonths}. ay`
+              : `Vade içinde %${summary.deliveryTargetRate} dolmuyor`
+          }
           icon={CalendarDays}
+          accent={summary.deliveryAchievable ? "text-zinc-900" : "text-amber-600"}
           testid="summary-teslim-tarihi"
         />
         <Card
@@ -97,13 +103,18 @@ export function SummaryCards({ summary }) {
         <Card
           label="Teslime Kadar Kalan"
           value={fmtTL(summary.requiredPreDelivery)}
-          sub={`${summary.preDeliveryMonths} ödeme dönemi`}
+          sub={
+            summary.preDeliveryMonths
+              ? `${summary.preDeliveryMonths} ödeme dönemi`
+              : "—"
+          }
           icon={Timer}
           testid="summary-teslime-kadar"
         />
         <Card
-          label="Minimum Aylık Ödeme"
+          label="Min. Aylık Ödeme"
           value={fmtTL(summary.minimumMonthly)}
+          sub={`${summary.minDeliveryMonths}. ayda teslim için`}
           icon={TrendingDown}
           accent="text-zinc-900"
           testid="summary-aylik-taksit"

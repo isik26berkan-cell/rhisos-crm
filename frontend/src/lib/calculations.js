@@ -1,4 +1,10 @@
 // Ev Planı Hesaplama - çekirdek hesaplama motoru (modüler fonksiyonlar)
+// KURAL: Teslim ayı kullanıcı tarafından seçilmez. Teslim, en erken 6. ayda
+// olabilir VE ancak toplam finansmanın %45'i o aya kadar ödenmişse gerçekleşir.
+// %45 daha erken dolsa bile teslim en erken 6. aydır; 6. ayda dolmuyorsa
+// %45'in dolduğu ilk ay teslim ayı olur.
+
+export const MIN_DELIVERY_MONTHS = 6;
 
 export const PAYMENT_TYPES = {
   ORG: "Organizasyon Ücreti Peşinat",
@@ -10,8 +16,7 @@ export const PAYMENT_TYPES = {
 export const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
 export function addMonths(date, n) {
-  const d = new Date(date.getFullYear(), date.getMonth() + n, date.getDate());
-  return d;
+  return new Date(date.getFullYear(), date.getMonth() + n, date.getDate());
 }
 
 export function monthDiff(start, end) {
@@ -29,7 +34,7 @@ export function installmentDate(startDate, period, paymentDay) {
   );
 }
 
-// --- Adım fonksiyonları (52. madde) ---
+// --- Adım fonksiyonları ---
 export const calculateOrganizationFee = (financing, rate) => financing * rate;
 
 export const calculateDownPaymentRatio = (down, financing) =>
@@ -40,25 +45,15 @@ export const calculateDeliveryTarget = (financing, rate) => financing * rate;
 export const calculateRequiredPreDeliveryPayment = (target, down) =>
   Math.max(0, target - down);
 
-export const calculateMinimumMonthlyPayment = (required, months) =>
-  months > 0 ? required / months : 0;
-
-export const calculateRemainingBalance = (financing, paid) =>
-  Math.max(0, financing - paid);
-
-// Verilen aylık ödeme ile %45 hedefine ulaşmak için gereken ay sayısı
-export function calculateEarliestDeliveryDate(startDate, down, target, monthly) {
-  if (down >= target) return { months: 0, date: startDate };
-  if (!monthly || monthly <= 0) return null;
-  const months = Math.ceil((target - down) / monthly);
-  return { months, date: installmentDate(startDate, months, 20) };
-}
+// 6. ayda (en erken) teslim için gereken minimum aylık ödeme
+export const calculateMinimumMonthlyPayment = (required) =>
+  required / MIN_DELIVERY_MONTHS;
 
 /**
- * Ana ödeme planı üretici.
+ * Ana ödeme planı üretici. Teslim ayı otomatik hesaplanır.
  * input: {
- *   financingAmount, downPayment, startDate(Date), deliveryDate(Date),
- *   paymentDay, termMonths, preMode('auto'|'manual'), preMonthly,
+ *   financingAmount, downPayment, startDate(Date), paymentDay, termMonths,
+ *   monthlyPayment (teslim öncesi aylık ödeme),
  *   postMode('auto'|'manual'), postMonthly, tiers[], edits{}, additional{}
  * }
  * settings: { organizationRate, deliveryTargetRate }
@@ -68,11 +63,9 @@ export function buildPlan(input, settings) {
     financingAmount,
     downPayment,
     startDate,
-    deliveryDate,
     paymentDay,
     termMonths,
-    preMode,
-    preMonthly,
+    monthlyPayment,
     postMode,
     postMonthly,
     tiers = [],
@@ -83,21 +76,15 @@ export function buildPlan(input, settings) {
   const orgRate = settings.organizationRate;
   const targetRate = settings.deliveryTargetRate;
 
-  // --- Doğrulamalar (46. madde) ---
+  // --- Doğrulamalar ---
   const errors = [];
   if (!(financingAmount > 0))
     errors.push("Finansman tutarı 0'dan büyük olmalıdır.");
   if (downPayment < 0) errors.push("Peşinat negatif olamaz.");
   if (downPayment > financingAmount)
     errors.push("Peşinat finansman tutarından yüksek olamaz.");
-  if (deliveryDate <= startDate)
-    errors.push("Teslim tarihi plan başlangıç tarihinden sonra olmalıdır.");
+  if (monthlyPayment < 0) errors.push("Aylık ödeme negatif olamaz.");
 
-  const N = clamp(monthDiff(startDate, deliveryDate), 0, termMonths); // teslim öncesi dönem
-  if (termMonths < monthDiff(startDate, deliveryDate))
-    errors.push("Toplam vade teslim tarihinden önce bitemez.");
-
-  // Kademe çakışma kontrolü
   const sorted = [...tiers].sort((a, b) => a.startMonth - b.startMonth);
   for (let i = 1; i < sorted.length; i++) {
     if (sorted[i].startMonth <= sorted[i - 1].endMonth) {
@@ -113,21 +100,43 @@ export function buildPlan(input, settings) {
     deliveryTargetAmount,
     downPayment
   );
-  const minimumMonthly = calculateMinimumMonthlyPayment(requiredPreDelivery, N);
-  const postCount = Math.max(0, termMonths - N);
+  const minimumMonthly = calculateMinimumMonthlyPayment(requiredPreDelivery);
 
   const findTier = (p) => sorted.find((t) => p >= t.startMonth && p <= t.endMonth);
+  // teslim öncesi (tasarruf) aylık ödeme tutarı
+  const prePay = (p) => {
+    if (edits[p] !== undefined) return edits[p];
+    const t = findTier(p);
+    if (t) return t.amount;
+    return monthlyPayment;
+  };
 
-  const preMonthlyAuto = N > 0 ? requiredPreDelivery / N : 0;
+  // --- Teslim ayını bul (en erken 6. ay + %45 kuralı) ---
+  let deliveryPeriod = null; // N
+  let searchCum = downPayment;
+  if (financingAmount > 0) {
+    if (downPayment >= deliveryTargetAmount - 0.5) {
+      deliveryPeriod = MIN_DELIVERY_MONTHS;
+    } else {
+      for (let m = 1; m <= termMonths; m++) {
+        searchCum += prePay(m) + (additional[m] || 0);
+        if (searchCum >= deliveryTargetAmount - 0.5) {
+          deliveryPeriod = Math.max(MIN_DELIVERY_MONTHS, m);
+          break;
+        }
+      }
+    }
+  }
+  const deliveryAchievable = deliveryPeriod !== null && deliveryPeriod <= termMonths;
+  const N = deliveryAchievable ? deliveryPeriod : Infinity;
+  const postCount = deliveryAchievable ? Math.max(0, termMonths - deliveryPeriod) : 0;
 
   // Teslim sonrası otomatik taksit için planlanan teslim öncesi toplam
   let preTotalPlanned = 0;
-  for (let p = 1; p <= N; p++) {
-    const t = findTier(p);
-    if (edits[p] !== undefined) preTotalPlanned += edits[p];
-    else if (t) preTotalPlanned += t.amount;
-    else if (preMode === "manual") preTotalPlanned += preMonthly;
-    else preTotalPlanned += preMonthlyAuto;
+  if (deliveryAchievable) {
+    for (let p = 1; p <= deliveryPeriod; p++) {
+      preTotalPlanned += prePay(p);
+    }
   }
   const teslimSonrasiKalanPlanned = Math.max(
     0,
@@ -136,10 +145,7 @@ export function buildPlan(input, settings) {
   const postMonthlyAuto = postCount > 0 ? teslimSonrasiKalanPlanned / postCount : 0;
 
   const basePlanned = (p) => {
-    const t = findTier(p);
-    if (edits[p] !== undefined) return edits[p];
-    if (t) return t.amount;
-    if (p <= N) return preMode === "manual" ? preMonthly : preMonthlyAuto;
+    if (p <= N) return prePay(p);
     return postMode === "manual" ? postMonthly : postMonthlyAuto;
   };
 
@@ -147,8 +153,7 @@ export function buildPlan(input, settings) {
   let remaining = financingAmount;
   let cumulative = 0;
 
-  if (errors.length === 0) {
-    // Organizasyon ücreti satırı (finansman geri ödemesine dahil DEĞİL)
+  if (errors.length === 0 && financingAmount > 0) {
     rows.push({
       period: "#",
       date: startDate,
@@ -156,13 +161,12 @@ export function buildPlan(input, settings) {
       baseAmount: organizationFee,
       additionalPayment: 0,
       cumulative: null,
-      remaining: remaining,
+      remaining,
       paymentType: PAYMENT_TYPES.ORG,
       isDeliveryMonth: false,
       editable: false,
     });
 
-    // Proje peşinatı satırı
     remaining = Math.max(0, remaining - downPayment);
     cumulative += downPayment;
     rows.push({
@@ -183,7 +187,7 @@ export function buildPlan(input, settings) {
       const base = basePlanned(p);
       const extra = additional[p] || 0;
       let pay = Math.min(base + extra, remaining);
-      if (p === termMonths) pay = remaining; // son taksit düzeltmesi
+      if (p === termMonths) pay = remaining;
       remaining = Math.max(0, remaining - pay);
       cumulative += pay;
       rows.push({
@@ -195,20 +199,18 @@ export function buildPlan(input, settings) {
         cumulative,
         remaining,
         paymentType: p <= N ? PAYMENT_TYPES.PRE : PAYMENT_TYPES.POST,
-        isDeliveryMonth: p === N,
+        isDeliveryMonth: p === deliveryPeriod,
         editable: true,
       });
     }
   }
 
-  // Teslimde ödenen (peşinat + teslim öncesi taksitler)
-  let deliveryCumulative = downPayment;
   const deliveryRow = rows.find((r) => r.isDeliveryMonth);
-  if (deliveryRow) deliveryCumulative = deliveryRow.cumulative;
-  else if (N === 0) deliveryCumulative = downPayment;
-
+  const deliveryCumulative = deliveryRow ? deliveryRow.cumulative : searchCum;
   const teslimSonrasiKalan = Math.max(0, financingAmount - deliveryCumulative);
-  const deliveryMet = deliveryCumulative >= deliveryTargetAmount - 0.5;
+  const deliveryDate = deliveryAchievable
+    ? installmentDate(startDate, deliveryPeriod, paymentDay)
+    : null;
 
   const summary = {
     financingAmount,
@@ -218,16 +220,19 @@ export function buildPlan(input, settings) {
     deliveryTargetRate: targetRate * 100,
     deliveryTargetAmount,
     requiredPreDelivery,
-    preDeliveryMonths: N,
+    preDeliveryMonths: deliveryAchievable ? deliveryPeriod : null,
     postDeliveryMonths: postCount,
     minimumMonthly,
     termMonths,
+    monthlyPayment,
     deliveryDate,
+    deliveryAchievable,
     startDate,
     deliveryCumulative,
     teslimSonrasiKalan,
-    deliveryMet,
+    deliveryMet: deliveryAchievable,
     downCoversDelivery: downPayment >= deliveryTargetAmount - 0.5,
+    minDeliveryMonths: MIN_DELIVERY_MONTHS,
   };
 
   return { rows, summary, errors };

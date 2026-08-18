@@ -11,7 +11,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { useSettings } from "@/context/SettingsContext";
-import { buildPlan, calculateEarliestDeliveryDate, calculateDeliveryTarget, addMonths } from "@/lib/calculations";
+import { buildPlan } from "@/lib/calculations";
 import { resolveInput } from "@/lib/resolve";
 import { parseNum, fmtTL, fmtMonthYear } from "@/lib/format";
 import { loadPlans, upsertPlan, deletePlan } from "@/lib/storage";
@@ -40,24 +40,18 @@ import {
 const makeDefaultPlan = (settings) => {
   const today = new Date();
   const iso = today.toISOString().slice(0, 10);
-  const d = addMonths(today, 10);
   return {
     id: crypto.randomUUID(),
     name: "",
     financingAmount: 2000000,
     downPayment: 300000,
     startDate: iso,
-    deliveryMonth: d.getMonth(),
-    deliveryYear: d.getFullYear(),
     paymentDay: settings.defaultPaymentDay,
     termMonths: 36,
     customTerm: false,
-    calcMode: "delivery",
-    preMode: "auto",
-    preMonthly: 60000,
+    monthlyPayment: 100000,
     postMode: "auto",
     postMonthly: 50000,
-    monthlyBudget: 50000,
     tiers: [],
     edits: {},
     additional: {},
@@ -112,7 +106,7 @@ export default function Calculator() {
   };
 
   const { rows, summary, errors } = useMemo(
-    () => buildPlan(resolveInput(plan, settings), settings),
+    () => buildPlan(resolveInput(plan), settings),
     [plan, settings]
   );
 
@@ -123,13 +117,6 @@ export default function Calculator() {
   const onAddExtra = (period, val) => {
     setPlan((p) => ({ ...p, additional: { ...p.additional, [period]: val } }));
   };
-
-  // Manuel taksit yeterlilik kontrolü
-  const startDate = new Date(`${plan.startDate}T00:00:00`);
-  const target = calculateDeliveryTarget(plan.financingAmount, settings.deliveryTargetRate);
-  const manualMode = plan.calcMode === "budget" || plan.preMode === "manual";
-  const checkPay = plan.calcMode === "budget" ? plan.monthlyBudget : plan.preMonthly;
-  const est = calculateEarliestDeliveryDate(startDate, plan.downPayment, target, checkPay);
 
   const handleSave = () => {
     const named = {
@@ -227,8 +214,9 @@ export default function Calculator() {
             Ödeme Planınızı Oluşturun
           </h2>
           <p className="text-zinc-500 mt-2 max-w-2xl">
-            Peşinatınıza, teslim tarihinize ve aylık bütçenize göre size özel ödeme
-            planınızı oluşturun.
+            Peşinatınıza ve aylık ödemenize göre teslim tarihiniz otomatik hesaplanır.
+            Teslim en erken 6. ayda ve finansmanın %{summary.deliveryTargetRate}'i
+            ödendiğinde gerçekleşir.
           </p>
         </div>
 
@@ -252,46 +240,33 @@ export default function Calculator() {
 
             {errors.length === 0 && (
               <>
-                {/* Bütçe modu sonucu */}
-                {plan.calcMode === "budget" && est && (
-                  <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4" data-testid="budget-result">
-                    <p className="text-sm text-sky-800 font-medium">
-                      Bu ödeme planıyla %{summary.deliveryTargetRate} hedefi{" "}
-                      <span className="font-semibold">{fmtMonthYear(summary.deliveryDate)}</span>{" "}
-                      tarihinde karşılanmaktadır.
+                {/* Teslim tarihi otomatik sonucu */}
+                {summary.deliveryAchievable ? (
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4" data-testid="delivery-result">
+                    <p className="text-sm text-emerald-800 font-medium flex items-center gap-2">
+                      <CheckCircle2 size={16} /> Girdiğiniz ödeme planıyla %
+                      {summary.deliveryTargetRate} teslim şartı{" "}
+                      <span className="font-semibold">{summary.preDeliveryMonths}. ayda</span>{" "}
+                      ({fmtMonthYear(summary.deliveryDate)}) karşılanıyor.
+                    </p>
+                    <p className="text-xs text-emerald-700 mt-1">
+                      Teslimde toplam ödenmiş: {fmtTL(summary.deliveryCumulative)} · Gerekli
+                      minimum: {fmtTL(summary.deliveryTargetAmount)} · Fazla:{" "}
+                      {fmtTL(Math.max(0, summary.deliveryCumulative - summary.deliveryTargetAmount))}
                     </p>
                   </div>
-                )}
-
-                {/* Manuel yeterlilik uyarıları */}
-                {manualMode && !summary.downCoversDelivery && (
-                  summary.deliveryMet ? (
-                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4" data-testid="manual-ok">
-                      <p className="text-sm text-emerald-800 font-medium flex items-center gap-2">
-                        <CheckCircle2 size={16} /> Seçtiğiniz ödeme planı teslim şartını karşılıyor.
-                      </p>
-                      <p className="text-xs text-emerald-700 mt-1">
-                        Teslimde toplam: {fmtTL(summary.deliveryCumulative)} · Gerekli minimum:{" "}
-                        {fmtTL(summary.deliveryTargetAmount)} · Fazla:{" "}
-                        {fmtTL(Math.max(0, summary.deliveryCumulative - summary.deliveryTargetAmount))}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="rounded-2xl border border-red-200 bg-red-50 p-4" data-testid="manual-fail">
-                      <p className="text-sm text-red-700 font-medium flex items-center gap-2">
-                        <AlertTriangle size={16} /> Seçtiğiniz aylık ödeme ile{" "}
-                        {fmtMonthYear(summary.deliveryDate)} tesliminde %
-                        {summary.deliveryTargetRate} ödeme şartına ulaşılamıyor.
-                      </p>
-                      <p className="text-xs text-red-600 mt-1">
-                        Gerekli minimum aylık ödeme: {fmtTL(summary.minimumMonthly)}
-                        {est && est.months > 0 &&
-                          ` · Bu ödeme tutarıyla en erken teslim: ${fmtMonthYear(
-                            addMonths(startDate, est.months)
-                          )}`}
-                      </p>
-                    </div>
-                  )
+                ) : (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 p-4" data-testid="delivery-fail">
+                    <p className="text-sm text-red-700 font-medium flex items-center gap-2">
+                      <AlertTriangle size={16} /> Girdiğiniz aylık ödeme ile toplam vade (
+                      {summary.termMonths} ay) içinde %{summary.deliveryTargetRate} teslim
+                      şartına ulaşılamıyor.
+                    </p>
+                    <p className="text-xs text-red-600 mt-1">
+                      {summary.minDeliveryMonths}. ayda teslim için gerekli minimum aylık ödeme:{" "}
+                      {fmtTL(summary.minimumMonthly)}
+                    </p>
+                  </div>
                 )}
 
                 <SummaryCards summary={summary} />

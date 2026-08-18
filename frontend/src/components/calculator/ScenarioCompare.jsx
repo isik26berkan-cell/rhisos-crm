@@ -15,8 +15,9 @@ const ROWS = [
   { key: "downPayment", label: "Peşinat", fmt: fmtTL },
   { key: "downPaymentRate", label: "Peşinat Oranı", fmt: (v) => fmtPct(v) },
   { key: "organizationFee", label: "Organizasyon Bedeli", fmt: fmtTL },
-  { key: "deliveryDate", label: "Teslim Tarihi", fmt: fmtMonthYear },
-  { key: "preDeliveryMonths", label: "Teslime Kadar Ay", fmt: (v) => `${v} ay` },
+  { key: "monthlyPayment", label: "Aylık Ödeme", fmt: fmtTL },
+  { key: "deliveryDate", label: "Teslim Tarihi", fmt: (v) => (v ? fmtMonthYear(v) : "—") },
+  { key: "preDeliveryMonths", label: "Teslime Kadar Ay", fmt: (v) => (v ? `${v} ay` : "—"), best: "min" },
   { key: "minimumMonthly", label: "Min. Aylık Ödeme", fmt: fmtTL, best: "min" },
   { key: "deliveryCumulative", label: "Teslimde Ödenmiş", fmt: fmtTL },
   { key: "teslimSonrasiKalan", label: "Teslim Sonrası Kalan", fmt: fmtTL, best: "min" },
@@ -39,12 +40,13 @@ export function ScenarioCompare({ open, onOpenChange, savedPlans, settings }) {
   const chosen = savedPlans.filter((p) => selected.includes(p.id));
   const computed = chosen.map((p) => ({
     name: p.name,
-    summary: buildPlan(resolveInput(p, settings), settings).summary,
+    summary: buildPlan(resolveInput(p), settings).summary,
   }));
 
   const bestFor = (row) => {
     if (!row.best || computed.length < 2) return null;
-    const vals = computed.map((c) => c.summary[row.key]);
+    const vals = computed.map((c) => c.summary[row.key]).filter((v) => v != null);
+    if (vals.length === 0) return null;
     return Math.min(...vals);
   };
 

@@ -1,44 +1,12 @@
-import {
-  calculateDeliveryTarget,
-  calculateEarliestDeliveryDate,
-} from "@/lib/calculations";
-
-export function resolveInput(plan, settings) {
-  const startDate = new Date(`${plan.startDate}T00:00:00`);
-  let deliveryDate = new Date(plan.deliveryYear, plan.deliveryMonth, 1);
-  let preMode = plan.preMode;
-  let preMonthly = plan.preMonthly;
-
-  if (plan.calcMode === "budget") {
-    const target = calculateDeliveryTarget(
-      plan.financingAmount,
-      settings.deliveryTargetRate
-    );
-    const est = calculateEarliestDeliveryDate(
-      startDate,
-      plan.downPayment,
-      target,
-      plan.monthlyBudget
-    );
-    const months = est ? Math.max(est.months, 1) : 1;
-    deliveryDate = new Date(
-      startDate.getFullYear(),
-      startDate.getMonth() + months,
-      1
-    );
-    preMode = "manual";
-    preMonthly = plan.monthlyBudget;
-  }
-
+// Plan state (localStorage/paylaşım) -> buildPlan girdisi
+export function resolveInput(plan) {
   return {
     financingAmount: plan.financingAmount,
     downPayment: plan.downPayment,
-    startDate,
-    deliveryDate,
+    startDate: new Date(`${plan.startDate}T00:00:00`),
     paymentDay: plan.paymentDay,
     termMonths: plan.termMonths,
-    preMode,
-    preMonthly,
+    monthlyPayment: plan.monthlyPayment,
     postMode: plan.postMode,
     postMonthly: plan.postMonthly,
     tiers: plan.tiers,
