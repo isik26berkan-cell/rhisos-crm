@@ -212,6 +212,27 @@ export function buildPlan(input, settings) {
     ? installmentDate(startDate, deliveryPeriod, paymentDay)
     : null;
 
+  // KURAL: Herhangi iki aylık ödeme arasında en fazla 3 kat fark olabilir.
+  // (Son taksit/balon ödeme, peşinat ve organizasyon bedeli hariç.)
+  const installmentRows = rows.filter((r) => r.editable);
+  const considered =
+    installmentRows.length > 1 ? installmentRows.slice(0, -1) : installmentRows;
+  const monthlyAmounts = considered
+    .map((r) => r.baseAmount)
+    .filter((a) => a > 0.5);
+  let paymentRatioWarning = null;
+  if (monthlyAmounts.length > 1) {
+    const maxAmount = Math.max(...monthlyAmounts);
+    const minAmount = Math.min(...monthlyAmounts);
+    if (minAmount > 0 && maxAmount / minAmount > 3 + 1e-6) {
+      paymentRatioWarning = {
+        max: maxAmount,
+        min: minAmount,
+        ratio: maxAmount / minAmount,
+      };
+    }
+  }
+
   const summary = {
     financingAmount,
     organizationFee,
@@ -233,6 +254,7 @@ export function buildPlan(input, settings) {
     deliveryMet: deliveryAchievable,
     downCoversDelivery: downPayment >= deliveryTargetAmount - 0.5,
     minDeliveryMonths: MIN_DELIVERY_MONTHS,
+    paymentRatioWarning,
   };
 
   return { rows, summary, errors };

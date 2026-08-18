@@ -269,6 +269,24 @@ export default function Calculator() {
                   </div>
                 )}
 
+                {summary.paymentRatioWarning && (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4" data-testid="ratio-warning">
+                    <p className="text-sm text-amber-800 font-medium flex items-center gap-2">
+                      <AlertTriangle size={16} /> Aylık ödemeler arasındaki fark en fazla 3
+                      kat olabilir.
+                    </p>
+                    <p className="text-xs text-amber-700 mt-1">
+                      En yüksek aylık ödeme ({fmtTL(summary.paymentRatioWarning.max)}), en
+                      düşük aylık ödemenin ({fmtTL(summary.paymentRatioWarning.min)}){" "}
+                      {summary.paymentRatioWarning.ratio.toLocaleString("tr-TR", {
+                        maximumFractionDigits: 1,
+                      })}{" "}
+                      katı. Lütfen teslim öncesi/sonrası aylık ödemeleri birbirine
+                      yaklaştırın.
+                    </p>
+                  </div>
+                )}
+
                 <SummaryCards summary={summary} />
                 <PaymentTable rows={rows} onEditAmount={onEditAmount} onAddExtra={onAddExtra} />
               </>
