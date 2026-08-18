@@ -993,6 +993,9 @@ logger = logging.getLogger(__name__)
 
 @app.on_event("startup")
 async def startup():
+    await init_db()
+
+async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@example.com").lower()
