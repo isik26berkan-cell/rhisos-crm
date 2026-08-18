@@ -1,0 +1,131 @@
+{
+  "theme": "light",
+  "archetype": "Swiss & High-Contrast (Fintech/Calculator Dashboard)",
+  "typography": {
+    "headings": {
+      "font_family": "Outfit, sans-serif",
+      "weights": ["400", "600", "700"],
+      "description": "Clean, geometric sans-serif for sharp, modern headings. Used for H1-H4 and prominent data points."
+    },
+    "body": {
+      "font_family": "Inter, sans-serif",
+      "weights": ["400", "500", "600"],
+      "description": "Highly legible sans-serif for rigorous numerical alignment in tables and forms."
+    },
+    "rules": [
+      "H1 (Hero): text-4xl sm:text-5xl tracking-tight text-primary font-semibold",
+      "H2 (Section): text-2xl sm:text-3xl tracking-tight text-primary font-medium",
+      "H3 (Card Title): text-sm sm:text-base uppercase tracking-[0.1em] text-secondary font-medium",
+      "Data Highlights: text-3xl sm:text-4xl font-semibold tracking-tighter",
+      "Tabular Data: tabular-nums text-sm text-primary"
+    ]
+  },
+  "colors": {
+    "background": "#F7F7F8",
+    "surface": "#FFFFFF",
+    "primary": "#0A0A0A",
+    "secondary": "#52525B",
+    "accent_coral": "#FF5A5F",
+    "accent_coral_light": "rgba(255, 90, 95, 0.08)",
+    "positive_green": "#10B981",
+    "warning_orange": "#F59E0B",
+    "error_red": "#EF4444",
+    "border": "#E4E4E7",
+    "rules": [
+      "Use #F7F7F8 for the main app background to provide subtle contrast against white cards.",
+      "Use #0A0A0A (Anthracite/Obsidian) for primary text and main CTA buttons for a premium feel.",
+      "Use #FF5A5F (Coral) strictly for Delivery Target (Teslim Hedefi) highlights, progress bar fill, and the specific delivery month row in the table.",
+      "Never use pure black or pure gray; always tint slightly."
+    ]
+  },
+  "surfaces_and_shadows": {
+    "cards": "bg-white rounded-2xl border border-zinc-200/60 shadow-sm",
+    "inputs": "bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 focus:border-zinc-900 transition-all",
+    "buttons_primary": "bg-zinc-900 text-white rounded-xl hover:bg-zinc-800 transition-colors shadow-md",
+    "buttons_secondary": "bg-white text-zinc-900 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors",
+    "table_row_highlight": "bg-[rgba(255,90,95,0.05)] border-l-4 border-[#FF5A5F]"
+  },
+  "layout_and_grids": {
+    "page_container": "max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 space-y-8",
+    "top_section": "grid grid-cols-1 lg:grid-cols-12 gap-8",
+    "form_column": "lg:col-span-4 space-y-6",
+    "summary_column": "lg:col-span-8 space-y-6",
+    "bento_summary": "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4",
+    "table_section": "mt-12 bg-white rounded-2xl border border-zinc-200/60 shadow-sm overflow-hidden",
+    "spacing_rules": "Generous spacing. Use p-6 or p-8 inside summary cards. Use gap-6 between form elements."
+  },
+  "components": {
+    "PlanBilgileriForm": {
+      "type": "Form",
+      "description": "Left column form. Needs currency masks (e.g., 2.000.000 TL). Use Shadcn UI Select, Input, and Slider. Labels must be left-aligned, small, uppercase tracking-wide.",
+      "path": "/app/frontend/src/components/calculator/PlanForm.jsx"
+    },
+    "PlanOzetiCards": {
+      "type": "Data Display",
+      "description": "Bento grid for live metrics. The 'Teslim Hedefi' card must be larger (col-span-full sm:col-span-2) with a prominent progress bar.",
+      "path": "/app/frontend/src/components/calculator/SummaryCards.jsx"
+    },
+    "TeslimProgressBar": {
+      "type": "Feedback",
+      "description": "A thick (h-3) progress bar. Background zinc-100, fill Coral (#FF5A5F). Add a marker at the 45% threshold line.",
+      "path": "/app/frontend/src/components/calculator/ProgressBar.jsx"
+    },
+    "OdemePlaniTable": {
+      "type": "Table",
+      "description": "Detailed datatable using Shadcn Table. Columns: Dönem, Taksit Tarihi, Aylık Ödeme, Toplam Ödeme, Kalan Borç, Ödeme Türü. The row where 'Kalan Borç' hits the delivery threshold must have `bg-coral-50` and coral text.",
+      "path": "/app/frontend/src/components/calculator/PaymentTable.jsx"
+    },
+    "ScenarioComparison": {
+      "type": "Modal/Sheet",
+      "description": "A side-by-side comparison view for up to 4 plans. Use Shadcn Sheet or a dedicated route with a 4-column CSS grid.",
+      "path": "/app/frontend/src/components/calculator/ScenarioCompare.jsx"
+    }
+  },
+  "interactions_and_motion": {
+    "hover_states": "All buttons must have subtle scale (-translate-y-[1px]) and shadow increase on hover.",
+    "live_calculation": "Use Framer Motion `<AnimatePresence>` or a number ticker to animate numbers in the summary cards when form values change.",
+    "table_rows": "Staggered fade-in (opacity 0 to 1, y: 10 to 0) for table rows when a new plan is generated."
+  },
+  "media_and_icons": {
+    "icon_library": "lucide-react",
+    "icon_usage": "Use icons sparingly. Use in summary card headers (16px, text-zinc-400) and primary actions.",
+    "hero_background": {
+      "url": "https://images.unsplash.com/photo-1741806914412-340ca16e9175?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzV8MHwxfHNlYXJjaHwxfHxtaW5pbWFsaXN0JTIwYXJjaGl0ZWN0dXJlJTIwYWJzdHJhY3QlMjB3aGl0ZXxlbnwwfHx8fDE3ODcwNjAxMjB8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Use as a very subtle, low-opacity (5%) background image or texture in the top header area to add a premium architectural feel."
+    }
+  },
+  "localization": {
+    "currency_format": "Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }). All outputs must show as 'X.XXX.XXX ₺' or 'TL'.",
+    "date_format": "date-fns/locale/tr. 'd MMM yyyy' (e.g., 3 Ağu 2026)."
+  },
+  "accessibility_and_testing": {
+    "contrast": "Ensure all text on coral backgrounds has sufficient contrast (use dark text if background is light coral).",
+    "test_ids": [
+      "data-testid='input-finansman-tutari'",
+      "data-testid='input-pesinat'",
+      "data-testid='btn-hesapla'",
+      "data-testid='summary-aylik-taksit'",
+      "data-testid='table-odeme-plani'"
+    ]
+  },
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. Avoid this.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Do NOT apply universal transition (e.g., transition: all). Add transitions for specific properties.",
+    "Do NOT center align the app container. No .App { text-align: center; }.",
+    "Always use modern button styles (rounded-xl) with interaction animations.",
+    "NEVER use AI assistant Emoji characters like 🤖🧠💭💡.",
+    "Prioritize using pre-existing components from src/components/ui.",
+    "Use sonner for toasts.",
+    "Ensure the Turkish formatting for currency (₺/TL) and dates is strictly adhered to.",
+    "The Delivery row in the table MUST be visually distinct (Coral/Red tint)."
+  ],
+  "libraries_to_install": [
+    "date-fns",
+    "lucide-react",
+    "framer-motion",
+    "clsx",
+    "tailwind-merge",
+    "recharts"
+  ]
+}

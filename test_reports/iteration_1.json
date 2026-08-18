@@ -1,0 +1,47 @@
+{
+  "summary": "Frontend-only Turkish Ev Planı Hesaplama uygulamasının kapsamlı Playwright testi yapıldı. 13 senaryo test edildi. Çoğu özellik (özet kartları, canlı hesaplama, hata mesajları, tablo, manuel düzenleme, ek ödeme, kademeli/gelişmiş ayarlar, budget modu, PDF/Excel export, ayarlar sayfası ve kalıcılık) beklendiği gibi çalışıyor. İki kritik konu tespit edildi: (1) Aynı oturumda iki farklı isimle plan kaydedince ikinci kayıt birincinin üzerine yazıyor (plan.id yeniden üretilmiyor). Bu senaryo karşılaştırma özelliğini fiilen kullanılamaz hale getiriyor. (2) Ayarlar sayfasında Organizasyon Oranı input'u '7.000000000000001' gibi bir float değer gösteriyor (kayıt/okuma sırasında *100/100 kaynaklı).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Calculator.handleSave (Kaydet)",
+        "issue": "Peş peşe iki farklı isimle 'Kaydet' yapıldığında plan.id değişmediği için upsertPlan ikinci planı birincinin üzerine yazıyor. Sonuçta 'Planlarım' listesinde sadece 1 kayıt görünüyor ve senaryo karşılaştırma çalışamıyor (compare-select tek eleman gösteriyor). handleSave, yeni bir kayıt oluşturuyorsa crypto.randomUUID() ile yeni id atamalı ya da 'Save As' davranışı sunmalı.",
+        "selector": "[data-testid='btn-save-confirm']",
+        "priority": "HIGH"
+      },
+      {
+        "component": "Settings - setting-org-rate",
+        "issue": "Ayarlar sayfası açıldığında Organizasyon Oranı input alanında değer '7.000000000000001' olarak görünüyor (varsayılan %7). Muhtemelen orjinal ondalık rate (0.07) * 100 çevrimindeki float aritmetik hatası. UI değeri gösterirken Number.parseFloat toFixed veya Math.round kullanılmalı.",
+        "selector": "[data-testid='setting-org-rate']",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Senaryo Karşılaştırma",
+        "issue": "İki plan kaydedilemediği için karşılaştırma ekranında yalnızca 1 compare-select seçeneği çıkıyor; compare-grid oluşturulamıyor. Kök neden yukarıdaki Kaydet bug'ı.",
+        "affected_selectors": ["[data-testid^='compare-select-']", "[data-testid='compare-grid']"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "handleSave içinde yeni kayıt oluşturulurken plan.id'yi crypto.randomUUID() ile yenile (veya 'Farklı Kaydet' butonu ekle). Bu düzelmeden senaryo karşılaştırma pratik olarak çalışmıyor.",
+    "Settings sayfasında oranlar input'a yüklenirken (orgRate*100) float artefaktını temizle: Number((rate*100).toFixed(2)) veya toString() sonrası parse.",
+    "Kaydet dialogunda boş isim submit'ini engelle (şu an 'İsimsiz Plan' fallback var, ancak isim alanı boş bırakılırsa aynı 'İsimsiz Plan' adıyla üst üste yazım da yaşanır)."
+  ],
+  "critical_code_review_comments": [
+    "buildPlan fonksiyonu 234 satır ve OK; ama Calculator.jsx tek dosya içinde ~315 satır — dialog'ları (Kaydet, Planlarım) ayrı komponentlere çıkarmak sürdürülebilirlik için önerilir.",
+    "handleSave: id yeniden üretilmediği için tek plan state ile çok kayıt yaratılamıyor.",
+    "SettingsContext orjinal rate'i 0.07 tutuyorsa Settings input'unda göstermeden önce güvenli yuvarlama gerekli."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (backend testi atlandı)", "frontend": "≈85% (13 senaryodan 11'i tam geçti, 2 bug)"},
+  "test_credentials": "Kimlik doğrulama yok",
+  "seed_data_creation": "localStorage.clear() ile her test öncesi temiz durum sağlandı; test sırasında 'Alpha' ve 'Beta' isimli planlar oluşturulmaya çalışıldı",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "1) plan.id regenerate düzeltmesi yapıldıktan sonra: iki farklı isimle kaydet → Planlarım'da 2 kayıt görünmeli → Karşılaştır'da 2 compare-select ve compare-grid render olmalı. 2) Settings float bug: Organizasyon Oranı %7 varsayılan yüklendiğinde input değeri tam '7' olarak görünmeli, kaydedilip geri döndüğünde de değişmemeli.",
+  "rca of the issue": "Kaydet bug'ı: Calculator.jsx#handleSave -> `const named = { ...plan, name: saveName || 'İsimsiz Plan', updatedAt: Date.now() };` mevcut plan.id'yi koruyor ve upsertPlan(named) ilk kayıtta insert, sonraki tüm kayıtlarda aynı id ile update yaparak birinci planı eziyor. Ayrıca setPlan(named) çağrısı state'i bu id ile kilitliyor. Fix: `id: crypto.randomUUID()` her Kaydet'te veya kullanıcının 'Farklı Kaydet' seçimine bağlı olarak yenilenmeli. Settings float: (orgRate * 100) IEEE-754 nedeniyle 7 yerine 7.000000000000001 üretiyor; Number((rate*100).toFixed(4)) ile temizlenmeli."
+}
